@@ -140,11 +140,79 @@ Tyto cíle se dokážou pomocí tzv. handshaku (posílání informací za účel
 -----
 
   
-TLS configurated
+TLS configurated 
+</pre>
+<br>
+<h3>ClientHello</h3>
+<p>Obsahuje</p>
+<ul>
+  <li>Protocol version</li>
+  <li>Client Random - 32 Bytes (256 bits)</li>
+  <li>(Session ID - z předchozí relace)</li>
+  <li>Cipher suites</li>
+  <li>List of compression methods</li>
+  <li>(kdyžtak nějaké extensions)</li>
+</ul>
+<br><br>
 
-
+<h3>ServerHello</h3>
+<p>Obsahuje</p>
+<ul>
+  <li>Selected protocol version</li>
+  <li>Server Random - 32 Bytes (256 bits)</li>
+  <li>Session ID - nově vygenerované</li>
+  <li>Selected cipher suites</li>
+  <li>List of selected compression methods</li>
+  <li>(kdyžtak nějaké extensions)</li>
+</ul>
+<br><br>
   
-</pre> 
+<h3>Server posílá certifikát</h3>
+<p>Obsahuje</p>
+<ul>
+  <li>certifikát</li>
+  <li>public key</li>
+</ul>
+
+<p>
+(ServerKeyExchange - pokud je použit DF-H, server pošle parametry DH/ECDHE, u RSA tomu tak není)
+(CertificateRequest - pokud server chce certifikát od clienta)
+</p>
+
+<h3>ServerHelloDone</h3>
+<p>Obsahuje</p>
+<ul>
+  <li>zprávu o ukončení handshake ze strany serveru</li>
+</ul>
+
+<h3>ClientKeyExchange</h3>
+<p>Obsahuje</p>
+<ul>
+  <li>vypočítaný premaster secret - zašifruje public klíčem, server si ho dešifruje jeho privátním klíčem</li>
+</ul>
+
+<p>Oba si spočítají Master Secret</p>
+
+<h3>ChangeCipherSpec</h3>
+<p>Obsahuje</p>
+<ul>
+  <li>zprávu o tom, že od teď bude probíhat komunikace se šifrováním</li>
+</ul>
+
+
+U RSA handshake:
+
+Klient vygeneruje Pre-Master Secret
+
+Zašifruje ho veřejným klíčem serveru (z certifikátu)
+
+Pošle ho serveru
+
+Server dešifruje Pre-Master Secret svým privátním klíčem
+
+➡️ Tohle je jediný moment, kdy se použije asymetrie
+
+potom už jen symetrie
 
 
 <h2>Appendix</h2>
@@ -152,9 +220,14 @@ TLS configurated
   <li>CA (Certificate Authority) = je důvěryhodná organizace, která vydává certifikáty (některé jsou více trusted, některé méně - méně trusted organizace)</li>
   <li>certifikát = "digitální průkaz" na internetu, který ověřuje že webový server patří opravdu webu a ne jen nějakému člověku</li>
   <li>MAC (Message Authentication Code) = je způsob ověření, že zpráva od klienta/serveru je autentická, je to hash klíče a zprávy , které se přidá do jiné hashovací funkce</li>
-  <li>pre master secret = část dat, ze které se udělá master secret, vytvoří se tak že se skombinuje session key a náhodných 48 Bytes</li>
+  <li>pre master secret = část dat, ze které se udělá master secret, vytvoří se tak že se skombinuje session key a náhodných 32 Bytes</li>
   <li>master secret = část dat, ze kterých se potom odvodí privátní klíče, HMAC (algoritmus pro MAC)..., vytvoří se z client random a server random a pre master secret</li>
   <li>clienet random/server random = náhodné 48 Bytes pro PMS (pre master secret, master secret)</li>
   <li>kontext v kryptografii = soubor paramterů pro správné fungování protokolu/operace</li>
+  <li>cipher suites = sada kryptografických algoritmů</li>
 </ul>
+<br><br>
+<p>https://tls12.xargs.org/#open-all</p>
+<p>https://www.cloudflare.com/learning/ssl/what-happens-in-a-tls-handshake/</p>
+<p>https://datatracker.ietf.org/doc/html/rfc5246#section-7.4.9</p>
 
