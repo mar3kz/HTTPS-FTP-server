@@ -107,18 +107,22 @@
   <li>Exchangenutí parametrů kryptografických parametrů na dohodnutí se vygenerování premaster secret a master secret</li>
 </ul>
 <br>
-Tyto cíle se dokážou pomocí tzv. handshaku (posílání informací za účelem navázání spojení mezi dvěma stranami), tento handshake se skládá z devíti části, čtyři z toho jsou posílání přes socket
+Tyto cíle se dokážou pomocí tzv. handshaku (posílání informací za účelem navázání spojení mezi dvěma stranami), tento handshake se skládá nejdříve pozdravení obou stran, kde jedna strana může vyžadovat certifikáty a nebo další požadavky, toto je dobrovelná, následně následuje generování klíčů a posílání potřebných dat, ze kterých klient získá klíče na hashovací funkce, klient pošle zprávu serveru ať přepne na encryptovanou komunikaci, potom pošle, že je připraven na tuto komunikaci, server potvrdí a také pošle, že je připraven na komunikaci pomocí encryptování, toto je konec handshaku, potom následují encryptovaná data a na konci každá strana pošle informaci o tom, že by chtěla zavřít spojení
 <br>
 <ol>
   <li>client hello</li>
   <li>server hello</li>
-  <li>authentication</li>
-  <li>premaster secret</li>
-  <li>private key used</li>
-  <li>generate session keys</li>
-  <li>client finished</li>
-  <li>server finished</li>
-  <li>TLS nakonfigurováno</li>
+  <li>(certifikát = server -> client)</li>
+  <li>(certifikát request = server -> client)</li>
+  <li>(parameters, public key exchange for DH - only DH!)</li>
+  <li>server hello done</li>
+  <li>(certifikát = client -> server)</li>
+  <li>(verification that client actually owns the certificate)</li>
+  <li>client wants encryption communication</li>
+  <li>client is ready</li>
+  <li>server is ready, encryption begins now</li>
+  <li>communication</li>
+  <li>close notification</li>
 </ol>
 <br>
 <p>Taky existuje i TLS i asymetrickými šiframi - Diffie-Hellman key exchange</p>
@@ -230,4 +234,6 @@ potom už jen symetrie
 <p>https://tls12.xargs.org/#open-all</p>
 <p>https://www.cloudflare.com/learning/ssl/what-happens-in-a-tls-handshake/</p>
 <p>https://datatracker.ietf.org/doc/html/rfc5246#section-7.4.9</p>
+<p>https://www.ibm.com/docs/en/cloud-paks/z-modernization-stack/2023.4?topic=handshake-tls-12-protocol</p>
+<p>https://cabulous.medium.com/tls-1-2-andtls-1-3-handshake-walkthrough-4cfd0a798164</p>
 
