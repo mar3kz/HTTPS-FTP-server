@@ -5,10 +5,27 @@
   <li>HTTP je bezstavový (neuchovává informace mezi požadavky)</li>
   <li>existují cookies, cache, tokens</li>
   <li>HTTP má několik verzí protokolů, ale nejvíce se používá 1.1, potom jsou také populární 2.0/3.0, ale nejvíce je 1.1</li>
-  <li><strong>HTTP 1.1 může poslat jenom request a potom se musí na něj odpovědět, potom se může pokračovat - takže pokud tomu tak není - TAK SE NĚKDE V KÓDU UDĚLALO NOVÉ PŘIPOJENÍ!!</strong></li>
+  <li><strong>HTTP 1.1 může poslat jenom request a potom se musí na něj odpovědět, potom se může pokračovat (head-of-line blocking) - takže pokud tomu tak není - TAK SE NĚKDE V KÓDU UDĚLALO NOVÉ PŘIPOJENÍ!!</strong></li>
   <li>HTTP 2, HTTP 3 může poslat několik requestů za sebou a to bez toho že každý potřebuje ihned po odeslání odpověď! (multiplexing)</li>
 </ul>
 
+<h1>HTTP protokol - metody</h1>
+<p>metoda = to, co chce uživatel přes browser udělat</p>
+<ul>
+  <li>GET</li>
+  <li>POST</li>
+  <li>PUT</li>
+  <li>DELETE</li>
+  <li>HEAD</li>
+  ...
+
+  <p>Existuje jich více, ale kromě prvních dvou/možná tří se ostatní moc nepoužívají</p>
+
+<h2>GET</h2>
+<p>GET znamená že chci od webovéhp serveru nějaká data</p>
+<p><strong>pokud je to první GET request na web request, není tam určená žádná specifická cesta, jen verze HTTP, nastavení browseru apod. pokud už je to několikátý request (kde, je třeba request na soubor, u kterého je specifikovaná cesta, tak ce do GET requestu zahrne samotná cesta - MIME datové typy</strong></p>
+
+</ul>
 
 <h1 align="center">WWW (World Wide Web), HTML (Hypertext Markup Language), web browser</h1>
 <ul>
