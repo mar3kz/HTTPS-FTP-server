@@ -1,4 +1,4 @@
-<h1>Generování a aplikování certifikátů</h1>
+<h1 align="center">Generování a aplikování certifikátů</h1>
 protože tato stránka neběží na WWW, proto nemůžeme požádat nějakou CA, aby nám vygenerovala certifikát, proto abychom náš server zabezpežili HTTPS, tak si můžeme vygenerovat vlastní certifikát tzv. self-assigned certificate pomosí OpenSSL, což je knihovna, jak z názvu může vypovídat právě na toto dělaná, některé certifikáty stojí peníze, ale postupem času se Let's encrypt (CA) rozhodli udělat to, že budou vydávat certifikáty zdarma za účelem zabezpečení internetu, ale podmínka je, že ten webový server musí běžet na WWW
 <br><br>
 <h1>Příkaz na vygenerování certifikátu</h1>
