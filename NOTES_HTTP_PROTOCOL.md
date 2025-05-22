@@ -18,15 +18,20 @@
   <li>DELETE</li>
   <li>HEAD</li>
   ...
-
+</ul>
   <p>Existuje jich více, ale kromě prvních dvou/možná tří se ostatní moc nepoužívají</p>
 
 <h2>GET</h2>
 <p>GET znamená že chci od webovéhp serveru nějaká data</p>
 <p><strong>pokud je to první GET request na web request, není tam určená žádná specifická cesta, jen verze HTTP, nastavení browseru apod. pokud už je to několikátý request (kde, je třeba request na soubor, u kterého je specifikovaná cesta, tak ce do GET requestu zahrne samotná cesta - MIME datové typy</strong></p>
-
-</ul>
-
+<p>data se pošlou v URL a jsou vidět v URL</p>
+<br>
+<h2>POST</h2>
+<p>slouží k posílání dat na server, neukazují se v URL</p>
+<br>
+<p><strong>každý řádek končí \r\n\r\n => Carriage return (0x0D - 13), Line Feed (0x0A - 10), Carriage Return (0x0D - 13), Line Feed (0x0A - 10)</strong></p>
+<p>LF (0x0A) = \n = nový řádek</p>
+<p>CR (0x0D) = \r = dá kurzor na začátek řádku</p>
 <h1 align="center">WWW (World Wide Web), HTML (Hypertext Markup Language), web browser</h1>
 <ul>
   <li>technologie, která umožňuje uživatelům dívat se po určitých webových serverech za účelem zjištění informací/jen z nudy/pro školu... z tzv. webových stránek pomocí web browseru, který nám zpřístupní cestu právě na tyto stránky pomocí určitého protokolu</li>
