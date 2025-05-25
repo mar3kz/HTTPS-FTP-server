@@ -1,6 +1,9 @@
 <h1 align="center">Generování a aplikování certifikátů</h1>
 protože tato stránka neběží na WWW, proto nemůžeme požádat nějakou CA, aby nám vygenerovala certifikát, proto abychom náš server zabezpežili HTTPS, tak si můžeme vygenerovat vlastní certifikát tzv. self-assigned certificate pomosí OpenSSL, což je knihovna, jak z názvu může vypovídat právě na toto dělaná, některé certifikáty stojí peníze, ale postupem času se Let's encrypt (CA) rozhodli udělat to, že budou vydávat certifikáty zdarma za účelem zabezpečení internetu, ale podmínka je, že ten webový server musí běžet na WWW
-<br><br>
+<br>
+<h2 align="center"><strong>Soubor obsahuje relativní cesty, proto je potřeba tento program pouštět ze složky FTP_SERVER</strong></h2>
+<br>
+
 <h1>Příkaz na vygenerování certifikátu</h1>
 <pre>openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes</pre>
 <p>tento příkaz nám vygeneruje certifikát, který bude platný na 365 dní, teoreticky by se mohl udělat certifikát, který bude neexpirovatelný, ale nejspíše nějaké OS/prohlížečů -> nepodporují certifikáty delší než 398 dní</p>
