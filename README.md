@@ -19,6 +19,8 @@ protože tato stránka neběží na WWW, proto nemůžeme požádat nějakou CA,
   6. OK
 </pre>
 <br>
+<p>Když jsem si dal ten certifikát do nastavení Firefoxu, tak na Forefoxu se možná ukáže to, že to je něvěřitelné spojení, ale to je jen protože ten certifikát je self-signed, ale jinak je to zašifrované, akorát ten webbrowser se toho bojí</p>
+<p>Webbrowsery se dívájí do tzv. <strong>trust store</strong> v systému, kde jsou všechny certifikáty (nejvíce od SSL/TLS), kterým by se mělo věřit, ale abychom toto mohli podniknout, tak musíme vložit do další složky v systému náš .crt/.pem soubor a potom updatovat ten trust store, aby se tomu certifikátu mohlo věřit, musí se to kopírovat do <strong>/usr/local/share/</strong></p>
 <hr>
 <h1 align="center">Jak použít OpenSSL, aby z HTTP => HTTPS</h1>
 <p>k dohledání potřebným informací jsou nejlepší tyto stránky</p>
