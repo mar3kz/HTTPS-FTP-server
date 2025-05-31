@@ -26,6 +26,7 @@ ta * znamená, že to platí pro všechny subdomény první úrovně => neco.web
 po zadání hesla, vygenerování našeho leaf certifikátu
 <br>
 ale po spuštění se bude pořád chtít heslo ke klíči a to může být docela časově náročné (chce to heslo na decrypci), to může být časově náročné, proto si to přejmenuji a "zkopíruji" a potom dalším příkazem odstraním encrypci samotného klíče
+<br><br>
 <pre>mv ./CERTS/server-key.pem ./CERTS/server-key-encrypted.pem</pre>
 <pre>openssl rsa -in server-key-encrypted.pem -out server-key.pem</pre>
 <br>
