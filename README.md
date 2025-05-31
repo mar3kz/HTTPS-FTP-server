@@ -24,7 +24,11 @@ Některé certifikáty stojí peníze, ale postupem času se Let's encrypt (CA) 
 ta * znamená, že to platí pro všechny subdomény první úrovně => neco.web.internal, xd.web.internal, ale nebude to fungovat na domény druhého stupně => neco.neco.web.internal toto už nepůjde
 <pre>openssl x509 -req -in server-req.pem -days 365 -CA CA-cert.pem -CAkey CA-key.pem -CAcreateserial -out server-cert.pem -extfile server-ext.cnf</pre>
 po zadání hesla, vygenerování našeho leaf certifikátu
-
+<br>
+ale po spuštění se bude pořád chtít heslo ke klíči a to může být docela časově náročné (chce to heslo na decrypci), to může být časově náročné, proto si to přejmenuji a "zkopíruji" a potom dalším příkazem odstraním encrypci samotného klíče
+<pre>mv ./CERTS/server-key.pem ./CERTS/server-key-encrypted.pem</pre>
+<pre>openssl rsa -in server-key-encrypted.pem -out server-key.pem</pre>
+<br>
 <h2>Pokud si certifikát nepodepíšeme lokálním root CA</h2>
 <p>pokud budeme chtít spustit server v browseru, tak možná prvních pár připojení nám selže, protože je to self-assigned certifikát a není assigned nějakým CA, což by mohlo dělat problémy, ale potom se samotná stránka načte do cache a nemělo by to dělat problémy, ale pokud bychom toto chtěli vyřešit, můžeme použít tento popis, který řekne browseru, že náš certifikát je v pořádku a nemusí nás na něj upozorňovat</p>
 <p>toto platí pro Firefox, Google Chrome to má jinak</p>
