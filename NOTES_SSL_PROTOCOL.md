@@ -224,6 +224,19 @@ Tato komunikace se skládá nejdříve z pozdravení obou stran, kde jedna stran
 <ul>
   <li>zprávu o tom, že od teď bude probíhat komunikace se šifrováním</li>
 </ul>
+<hr>
+
+<h1>SSL/TLS handshake můžeme obohatit ještě o určitá rozšíření, která trochu změní obsah určitých zpráv v SSL/TLS handshaku</h1>
+<p>následně se to dělí podle server side extensions nebo na client side extensions</p>
+<h2>ALPN (Application-Layer Protocol Negotiation) - client side ALE I server side</h2>
+<ul>
+  <li>používá se především u webové komunikace a slouží k dohodnutí na používání jaké verze protokolu HTTP se použije</li>
+  <li>je to rozšíření SSL/TLS handshaku - konkrétně <code>ClientHello</code>, kde se pošle list verzí protokolů, které bz bzlz vhodné na použití</li>
+</ul>
+<h2>SNI - client side</h2>
+<h2>OSCP stapling - client side</h2>
+<h2>ESNI - server side</h2>
+<br>
 
 <h2>Důležitá informace</h2>
 <p>Samozřejmě, že každá SSL/TLS komunikace se může lišit, protože nikde nejsou přesně stanovené pravidla na komunikaci, toto znamená, že certifikát od serveru se vůbec nemusí poslat za určitých okolností, komunikace může zahrnovat ještě nějaké další informace o extsension komunikace SSL/TLS, tento popis je pouze informační.</p>
