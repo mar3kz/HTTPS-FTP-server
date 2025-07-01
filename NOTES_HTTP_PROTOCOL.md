@@ -57,5 +57,37 @@
 <br>
 <hr>
 <h2 align="center">HTTP/2</h2>
-<p>největší rozdíl mezi HTTP/1.1 a HTTP/2 (HTTP/1.0 se skoro už vůbec nepoužívá) je takový, že HTTP/2 je zcela binární a že se skládá z tzv. rámců, které označují účel HTTP/2 zprávy</p>
+<p>největší rozdíl mezi HTTP/1.1 a HTTP/2 (HTTP/1.0 se skoro už vůbec nepoužívá) je takový, že HTTP/2 je zcela binární a že se skládá z tzv. rámců, které mají různé názvy podle toho, co signalizují</p>
+<p>různé rámce znamenají různý důvod, proč ten rámec byl vůbec poslán (je jich 10 rámců) s tím, že většinou každou konverzaci se začíná zprávou, kde je jediný rámec SETTINGS (bez HEADERS), který předává dodatečné informace, jak HTTP/2 bude v nadcházející konverzaci fungovat</p>
+<p>každá zpráva se skládá minimálně z jednoho rámce, který se skládá z frame header (9 Bytes) a payloadu, kde jsou samotná data rámce, vždy musí být rámec HEADERS (pokud to není jako PING, GOAWAY, SETTINGS) a potom může být rámec jako DATA apod.</p>
+<p>HTTP/1.1 podporoval i pipeline (client mohl poslat několik requestů za sebou a server MUSÍ odpovdět na tyto požadavky v přesném pořadí, tak jak byly poslány, což byl ale velký problém, a proto velké množství serverů tuto možnost nepoužívá a nenabízí a ještě jeden velký problém HTTP/1.1 je takový (mluvíme teď čistě bez pipeliningu), že když je poslán request na recource, tak client čeká, než dostane odpověď na tento požadavek, než pošle další, ale může se stát, že se někde opoždí a celá konekce zůstane stát - head of line blocking, proto některé browsery otevírají několik tich TCP connections (další důvod, proč Google Chrome otevírá několik TCP connections, ale patří to k jednomu připojení)</p>
+<p>HTTP/2 vyřešilo problém s head of line blocking tím, že komunikace se serverem je zařízená tak, že každý stream (logické spojení vyhrazené třeba jenom pro HTML nebo CSS - má své ID) může být posláno v jakémkoliv pořadí a server může odpovědět v jakémkoliv pořadí, nebo podle priority a client také může ty požadavky multiplexovat - posílat hned za sebou</p>
+<p>HTTP/2 umožňuje tzv. server push, což ve zkratce znamená, že server může poslat clientovi nějaké recources bez toho, aby si client o ně požádal (pokud jsou nové např.)</p>
+<p>HTTP/2 využívá algoritmus na kompresy hlaviček HPACK a musí být přes SSL/TLS!!</p>
+<pre>
+client                             server
+---------------
+rámec SETTINGS
+---------------     ------->
+                                  ---------------
+                                  rámec SETTINGS
+                    <-------      ---------------
+--------------
+rámec HEADERS
+--------------
+rámec DATA
+--------------      ------->
+                                  --------------
+                                  rámec HEADERS
+                                  --------------
+                                  rámec DATA
+                    <-------      --------------
+  -------------
+  rámec GOAWAY
+  -------------     ------->
+                                  ukončení spojení
 
+každý rámec má frame header a payload (i SETTINGS, PING, GOAWAY)
+GOAWAY může poslat i client
+</pre>
+toto by samozřejmě šlo implementovat pomocí samotného programátora, ale je mnohem jednodušší na to použít knihovnu jako nghttp2, ta zase používá knihovnu libevent
