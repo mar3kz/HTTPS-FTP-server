@@ -42,3 +42,20 @@
   <li>web browser = software, který nám umožňuje připojit se k webovému serveru za účelem prohlížení webové stránky/prohlížení souborů na našem počítači/disku</li>
   <li>HTTP = protokol (způsob, jak se data posílají, jak se data formátují) za účelem, aby určitá aplikaci mohla komunikovat s jinou</li></strong>
 </ul>
+<br>
+<hr>
+<h1 align="center">Proč použít HTTP/2 a ne HTTP/1.1</h1>
+<p>k tomu, abych vysvětlil, proč je používání HTTP/2 lepší a někdy i nutné v některých případech, musím zmínit v čem je velká nevýhoda mezi internetovými prohlížeči</p>
+<h2>Nevýhody mezi internetovými prohlížeči</h2>
+<p>Internetových prohlížečů je velká spousta, ale konkrétně se budu zaměřovat na Google Chrome a Firefox, jsou si velice podobné, ale v něčem jsou si odlišné a právě tato věc může narušit celý běh aplikace</p>
+<p>Například jak Google Chrome zvládá konekce, Google Chrome může udělat více spojení na jeden server, více TCP konekcí na stejný web, ale jiný lokální port, proč? Protože Google Chrome má tzv. pre-connect, nebo když by se ptání na recources ze serveru trvalo dlouho, tak se prostě udělá nová konekce k serveru, i když třeba zatím nic nemusí dělat a právě pokud toto kód nemá ošetřené, tak je to problém, Firefox používá jen jednu konekci na server, proto je lepší v tomto případě použít HTTP/2, kde je povoleno multiplexování a pouze jedna konekce k serveru </p>
+<ul>
+  <li>https://stackoverflow.com/questions/47336535/why-does-chrome-open-a-connection-but-not-send-anything</li>
+  <li>https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel/preconnect</li>
+  <li>https://stackoverflow.com/questions/52731867/why-are-there-multiple-tcp-connections-to-the-server-when-i-open-one-website-pag</li>
+</ul>
+<br>
+<hr>
+<h2 align="center">HTTP/2</h2>
+<p>největší rozdíl mezi HTTP/1.1 a HTTP/2 (HTTP/1.0 se skoro už vůbec nepoužívá) je takový, že HTTP/2 je zcela binární a že se skládá z tzv. rámců, které označují účel HTTP/2 zprávy</p>
+
