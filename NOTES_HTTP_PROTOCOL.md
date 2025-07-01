@@ -5,8 +5,8 @@
   <li>HTTP je bezstavový (neuchovává informace mezi požadavky)</li>
   <li>existují cookies, cache, tokens</li>
   <li>HTTP má několik verzí protokolů, ale nejvíce se používá 1.1, potom jsou také populární 2.0/3.0, ale nejvíce je 1.1</li>
-  <li><strong>HTTP 1.1 může poslat jenom request a potom se musí na něj odpovědět, potom se může pokračovat (head-of-line blocking) - takže pokud tomu tak není - TAK SE NĚKDE V KÓDU UDĚLALO NOVÉ PŘIPOJENÍ!!</strong></li>
-  <li>HTTP 2, HTTP 3 může poslat několik requestů za sebou a to bez toho že každý potřebuje ihned po odeslání odpověď! (multiplexing)</li>
+  <li><strong>HTTP/1.1 může poslat jenom request a potom se musí na něj odpovědět, potom se může pokračovat (head-of-line blocking) - takže pokud tomu tak není - TAK SE NĚKDE V KÓDU UDĚLALO NOVÉ PŘIPOJENÍ!!</strong></li>
+  <li>HTTP/2, HTTP/3 může poslat několik requestů za sebou a to bez toho že každý potřebuje ihned po odeslání odpověď! (multiplexing)</li>
 </ul>
 
 <h1>HTTP protokol - metody</h1>
