@@ -9,7 +9,7 @@
 <ul>
   <li>knihovna, která poskytuje možnost zavolání callback funkcí, když se stane nějaký event na file descriptoru/ po dokončení timeoutu/po přijetí signálu</li>
   <li>poskytuje možnosti na DNS lookup (jako getaddrinfo)</li>
-  <li>libevent má tzv. evbuffery/bufferevent, což zjednodušeně znamená, neprůhledný pointer na internal structuru, která má za úkol zjednodušit posílání/čtení dat z socketu, např. evbuffery na tohler jsou přesně dělané a buffereventy nabízejí ještě k tomu callbacky</li>
+  <li>libevent má tzv. evbuffery/bufferevent, což zjednodušeně znamená, neprůhledný pointer na internal structuru, která má za úkol zjednodušit posílání/čtení dat z socketu, např. evbuffery na tohle jsou přesně dělané a buffereventy nabízejí ještě k tomu callbacky</li>
 </ul>
 <h2>Opaque pointers</h2>
 <p>opaque = neprůhledný</p>
