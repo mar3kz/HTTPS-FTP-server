@@ -1,0 +1,3 @@
+log.txt /home/marek/Documents/FTP_SERVER/TXT/log.txt marek
+try2.txt /home/marek/try2.txt marek
+try3.txt /home/marek/try3.txt marek

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Formular - tvorba uctu</title>
+    <!--path pro CSS muze byt spatne, protoze web browser primejeme, aby pouzil to CSS, ktere posleme-->
+    <link rel="stylesheet" href="/CSS/formular_server.css">
+</head>
+<body>
+    <div>
+       <!-- kdybychom tam nemeli to action, nebo prazdne, tak ten POST response (data) se poslou na stejnou URL => tento soubor => data bychom upravovali uz rovnou -->
+        <!-- v tomto souboru, jako jsme delali v 2. rocniku na WWW, kdyz jsme pracovali s PHP -->
+        <!-- ten action atribut je spise pro jazyky, ktere pracuji na serveru a jsou pouzivane pro sebrani dat z toho pozadavku, tak tam se poslou ty data -->
+         <!-- ale kdyz to chci jenom poslat a potom roztridit na jaky pozadavek prijde jaka path, tak toto muzu pouzit k rozliseni -->
+          <!-- ono se to posle na ten server a zaroven i na tu URL (ten soubor v action atributu) -->
+           <!-- kdyby to action tam nebylo tak by se to poslalo ve formatu POST / HTTP/1.1 ... => jinak se to posle POST/HTML/formular... HTTP/1.1 -->
+        <form action="/HTML/formular_tvorba_uctu.html" method="post">
+            <table>
+                <tr>
+                    <th colspan="2">
+                      <h1>Zalozit ucet</h1>
+                    </th>
+                </tr>
+                <tr>
+                  <td>
+                    <label for="username">username</label>
+                  </td>
+                  <td>
+                    <input type="text" name="username" id="sername" maxlength="8" placeholder="Max delka - 8 znaku">
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <label for="password">password</label>
+                  </td>
+                  <td>
+                    <input type="password" name="password" id="password" placeholder="Vase heslo - min 8 znaku" minlength="8">
+                  </td>
+                </tr>
+                <tr>
+                  <td colspan="2">
+                    <input type="submit" value="Odeslat">
+                  </td>
+                </tr>
+            </table>
+        </form>
+    </div>
+</body>
+</html>

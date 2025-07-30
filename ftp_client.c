@@ -1,0 +1,560 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <fcntl.h> // operation on files
+#include <netinet/in.h> // network internet => getaddrinfo, addrinfo, konstanty pro protokoly apod
+#include <arpa/inet.h> // arpa internet, internet => prace s IP adresami, prevody apod.
+#include <netdb.h> // prace s DNS preklady apod. => gethostbyname, addrinfo, getaddrinfo
+#include <sys/socket.h> // nejzakladnejsi funkce k socket API
+#include <unistd.h> // getuid, sleep
+#include <pwd.h> // password structure => v ni je home directory, getpwuid
+#include <dirent.h> // pro cteni slozek
+#include <sys/stat.h> // stat, lstat, fstat
+
+#define CONTROL_PORT 2100
+#define DATA_PORT 2000
+#define MAX_LEN 256
+#define STDIN 0
+#define NFDS 4 // number of file descriptors
+
+typedef struct Ftp_Dtp_Data {
+    char *path;
+    char *owner;
+    char *type;
+    size_t file_length;
+} ftp_dtp_data;
+ftp_dtp_data obj;
+
+// AF_INET = Address Family Internet
+// sin = socket internet
+
+// inet_pton => prevadi text na bitovou verzi
+// htons => meni poradi bitu na network format (big endian)
+
+// big endian = MSB na nejnizsi memory adrese
+// little endian = MSB na nejvyssi memory adrese
+
+// IPv4 = 32 bits => 4 Bytes
+// port = 16 bits => 2 Bytes
+
+// IPv6 = 128 bits => 16 Bytes
+// port = 16 bits => 2 Bytes
+
+// IPv4 => 4 oktety = 4 * 8 bits
+// IPv6 => 8 bloku po 16 bits, oddelene dvojteckou
+
+/*
+struct sockaddr {
+    unsigned short    sa_family;    // address family, AF_xxx
+    char              sa_data[14];  // 14 bytes of protocol address
+};
+
+i kdyz tato struktura pouziva char, ktery ma range -127->128, 7 bits se pouzivaji na data, 8. je na znamenko
+proc se nepouziva unsigned char, ktery ma range 0-255?
+protoze je to kvuli kompatibilite a historii, Byte s rangi -127->128 se pouziva jako "raw Byte", coz znamena ze se nehledi na znamenko a pouzije se samotna hodnota
+*/
+
+// ja si bud muzu naplnit samotne struktury sam, nebo si udelam strukturu addrinfo, tam si specifikuji ty parametry, podle kterych chci aby se mi vyplnil
+// ten linked list tich adres a portu apod.
+
+// communication domain = komunikacni domena => rodina protokolu
+
+// Linus Torvalds udelal kernel a nemel pristroje jako kompilator apod
+// GNU projekt Richard Stallman udelali nastroje, ale nemeli moc funkcni kernel
+// => GNU/Linux = Torvalds => linux ma kernel system calls, Stallman ma glibc, kompilator, nastroj apod. knihovnu pro user-space => normalni funkce pro C
+
+
+/*
+Rule of Thumb: standard library functions handling strings will always append the null character. The only exception is strncpy. – 
+Paul Ogilvie
+Commented Mar 28, 2019 at 7:40
+
+https://stackoverflow.com/questions/69204707/why-cant-i-use-n-scanset
+*/
+
+struct Node_Linked_List {
+    char *path;
+    char **dir_names;
+    int *yes_no_states;
+    int yes_no_states_i;
+    struct Node_Linked_List *next_node;
+    struct Node_Linked_List *previous_node;
+};
+struct Node_Linked_List *root_node;
+char *root_node_path;
+
+char **make_path_lk(char **dir_names, int dir_count, char *path) {
+    // protoze v tom linked list bude pointer na pointer jenom slov (tich slozek), potom tahle path, my ty paths spojime na cele path, abychom vedeli, kam potom zase jit
+
+    char **full_paths = (char **)calloc(dir_count, sizeof(char *));
+
+    // cd ~/Desktop/ a cd ~/Desktop je uplne to stejne, neni tam zadny rozdil
+    for (int i = 0; i < dir_count; i++) {
+        char temp_path[256] = {0};
+        snprintf(temp_path, 255, "%s/%s", path, dir_names[i]); // ta velikost muze byt klidne hodne mnohem vetsi nez opravdu to, co se tam zapise, je to jenom maximalni delka Bytes, 1 Byte pro \0, \0 se pridava automaticky
+
+        full_paths[i] = (char *)malloc(strlen(temp_path));
+        strcpy(full_paths[i], temp_path);
+    }
+
+}
+
+char *change_path_curr_prev(char *path) {
+    // /home/marek/.. => /home
+
+    // /home/marek/..
+    //             .
+
+    printf("\nTED TADY HALO, AVE CHRISTUS REX");
+
+
+    char *prev_p = strstr(path, "..");
+    int prev_i = (int)(prev_p - path);
+    int path_len = prev_i + 2;
+
+    int raw_prev_i = prev_i - 1; // bez /
+
+    char *action_buf = (char *)malloc(path_len); // .\0
+    memset(action_buf, 0, prev_i);
+    snprintf(action_buf, prev_i, "%s", path); // ted je v action bufferu path
+    memset(action_buf + prev_i, 0, 2); // nahrazuji se ty dve tecky
+
+    int reverse_i = 0;
+    for (int i = prev_i + 1; i >= 0; i--) { // prev_i + 1, protoze ta prvni tecka je ten index, ktery ziskame, 0 je samotny zacatek toho stringu
+        action_buf[reverse_i] = path[i];
+        reverse_i++;
+        // printf("\n\n char action buf %c, char path %c\n\n", path[i]);
+        // fflush(stdout);
+    }
+    // nemusim ukoncovat ten buffer, protoze 0 Bytes = NULL terminator
+    // printf("\npred tim nez se to vrati: %s\n", action_buf); // prevraceny string
+
+    // ../potkesD/keram/emoh
+    //   .       .
+    // o tento rozdil mene alokuji ten buffer, aby to bylo efektivni
+
+    char *first_slash_reverse = strstr(action_buf, "/"); // tak bychom meli najit ten druhy slash v te ceste
+    int first_slash_reverse_i = (int)(first_slash_reverse - action_buf);
+
+    char *second_slash_reverse = strstr(action_buf + strlen("../"), "/");
+    int second_slash_reverse_i = (int)(second_slash_reverse - action_buf);
+
+    int difference = second_slash_reverse_i - first_slash_reverse_i;
+
+    char *final_buffer = (char *)malloc(path_len - difference + 1); // + 1 pro \0
+    memset(final_buffer, 0, path_len - difference + 1);
+
+    int final_buffer_i = 0;
+    for (int i = prev_i + 1; i >= second_slash_reverse_i; i--) {
+        final_buffer[final_buffer_i] = action_buf[i];
+        final_buffer_i++;
+    }
+    // nemusim to ukoncovat pomoci \0, protoze 0 Byte = NULL terminator
+
+    printf("\n\nfinal_buffer: %s\n\n", final_buffer);
+    
+    
+    return final_buffer;
+}
+
+static void file_data(char *path, char *type) {
+    // O => open() flags
+    // S => file mode bits
+    // F => fcntl() prikazy
+    DIR *dirstream_check = opendir(path);
+    printf("\npath: %s\n", path);
+    struct dirent *entry = readdir(dirstream_check);
+
+    if (entry->d_type == DT_REG && *type == 'f') {
+        int fd = open(path, O_CREAT | O_APPEND | O_RDONLY, S_IRWXU | S_IRWXG, S_IRWXO, S_ISUID); // 4777 => spusteni s pravy vlastnika, vsichny read, write, execute
+        if (fd == -1) {
+            perror("open() selhal - prepare_ftp_dtp_data_struct");
+            exit(EXIT_FAILURE);
+        }
+
+        struct stat status_file;
+        int fstat_rv = fstat(fd, &status_file);
+        if (fstat_rv == -1) {
+            perror("fstat() selhal - prepare_ftp_dtp_data_struct");
+            exit(EXIT_FAILURE);
+        }
+
+        off_t offset_length_file = status_file.st_size;
+
+        char *file_data = (char *)malloc(offset_length_file);
+
+        ssize_t read_rv = read(fd, file_data, offset_length_file);
+        if (read_rv == -1) {
+            perror("read() selhal - prepare_ftp_dtp_data_struct");
+            exit(EXIT_FAILURE);
+        }
+
+        char *username = (char *)malloc(MAX_LEN);
+        getlogin_r(username, MAX_LEN);
+        if (username == NULL) {
+            perror("getlogin_r() selhal - ftp_dtp_data_struct");
+            exit(EXIT_FAILURE);
+        }
+
+        obj.path = path;
+        obj.owner = username;
+        obj.file_length = offset_length_file;
+    }
+}
+
+struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_node) {
+    // tato funkce vrati novy node (dalsi slozka)
+    // chci se podivat na informace node, ktery dostaneme, na jeho path, dirnames, states a prvni, kde bude v states 1, tak nastavime node, ktery jsme dostali 1 a path noveho nodu nastavime na prave tuto path a chceme nastavit referenci (pointer) na node, ktery jsme dostali
+    
+    // POINTERS INFORMACE - PASS BY VALUE
+
+    // C je tzv. pass by value, co toto znamena je to, ze kdyz funkci dame nejakou promennou, tak my dostaneme na svuj stack frame tu promenou (nebo v registrech, spise v registrech, prvnich 9 promennych jde do funkci pomoci registru), ma to svoji memory adresu (i v tom registru), ale dostali jsme kopii samotne promenne, nedostali jsme tu samotnou jednu promennou, udelala se nova se stejnou hodnotou, u pointeru je to stejne, ale U POINTERU POZOR, protoze pointery maji jinou SVOJI memory adresu (kde se v RAM) nachazeji, ale maji STEJNOU MEMORY ADRESU, KAM UKAZUJI, tak kdyz udelame dereferenci, tak se hodnoty zmeni VSUDE V RAM, jak ve funkci, kde jsme ten pointer dostali, tak i v te funkci, ze ktere jsme ten pointer predavali
+    // ale protoze jsme dostali kopii toho pointeru, tak kdyz udelame ptr = , tak se zmeni memory adresa kam bude pointer ukazovat JEN LOKALNE, PROTOZE JSME DOSTALI POUZE KOPII!!
+    
+    
+    // ptr = change the memory address of ptr
+    // *ptr = get the value that is on memory address pointed to by ptr
+    // &ptr = get the memory address of ptr where the ptr is located at
+
+    // pointer na pointer si muzeme predstavit takto:
+    // promenna s hodnotou je boxik s kulickou, pointer je papirovy pytlik a * dereference operator je posun z jednoho vnejsiho levelu o jeden level dovnitr
+    // takze mame pytliku 1 boxik s kulickou (pointer na promennou - hodnotu), a toto cele je v papirovem pytliku 2 (pointer na pointer), pokud bychom chteli zmenit pytlik 1, tak bychom museli udelat *ptr = , pokud bychom chteli zmenit samotnou hodnotu v boxiku, tak bychom museli udelat **ptr = ,
+
+    // pokud bychom meli jenom nejaky pointer, ktery by ukazoval na cista data tak bychom meli pytlik, vnemz by byla kulicka (samotna data), pointer na pointer => papirovy pytlik s kulickou v dalsim papirovem pytliku s kulickou
+
+    // !POZOR kdybychom delali malloc(), tak se dela type cast na PRVNI POINTER V TOM memory chunk, proto se tam dela char * = (char *)malloc(), specifikuje se jaky typ bude ten PRVNI pointer na tuto memory adresu
+    // jedna strana se musi rovnat druhe!
+    // *ptr = *ptr, **ptr = **ptr, SAMOZREJME TAKY PODLE KONTEXTU (co se **ptr = **ptr tyce)
+
+
+    // TAKE JE ROZDIL MEZI KOPIROVANI DAT DO POLE A DO PROMENNE
+    // do promenne je to jednodussi, protoze nam to staci dereferencovat, ale do pole nejdrive musime alokovat memory chunk a az potom do nej neco kopirovat, protoze pokud mame pointer, ktery uz je naalokovany a predame ho funkci, tak nam staci jenom memcpy do tohoto pointeru a bude to fungovat, protoze ta kopie pointeru ukazuje na stejne misto jako ten originalni pointer
+
+    // ale pokud budeme mit pointer, ktery je nealokovany a budeme ho chtit alokovat v samotne funkci, tak ta funkce MUSI dostat memory adresu tohoto pointeru => pointer na pointer, proc?
+    // kdybychom meli pointer ve funkci => kopiie, vse naalokujeme apod. ALE, takhle naplnime ten "lokalni" pointer (kopii), to bychom ten pointer museli vracet, coz by treba mohl byt problem pokud ta funkce ma vracet neco jineho, kdybychom dostali memory adresu toho pointeru, tak muzeme na tu adresu alokovat a nasledne i memcpy bez potreby navratu nebo alokovani v jine funkci a zbytecne se starat o alokovani/pripravovani pointeru na jinych mistech v kodu
+
+    // pokud bychom naalokovali ten lokalni pointer a potom ho treba nevratili, tak by vznikl memory leak, na danou memory adresu nikdo neukazuje (neni zadna reference)
+
+
+    // nejdrive maji prednost operatory, ktere jsou urcene pro pristup do urcitych struktur, indexace, volani funkci
+    // pote dereference, typecast, sizeof, address of
+    // pote jsou matematicke operace, pokud si nejsme jisti temito operace, tak bychom meli pouzit zavorky, abychom to jiste odlisili od sebe
+
+    // v C jmena statickych poli NEJSOU POINTERY:
+
+    // v C si muzeme vytvorit pole bud staticky a nebo dynamicky s tim, ze staticke alokovani pameti je znamo uz pri kompilaci, zatimco dynamicke alokovani je znamo az pri run time
+    // jmeno statickeho pole je konstantni symbolicka adresa (tento vyraz se pouziva se treba v Assembly -> konstantni "string pismen", ktery ma zamenitelny nazev za memory adresu) prvniho prvku (ALE POZOR JE TO KONSTANTNI SYMBOLICKA ADRESA => KONSTANTA), to znamena, ze nemuzeme nasmerovat, aby tato promenna smerovala nekam jinam, protoze je to konstanta => nemuzeme udelat pole = memoryaddress
+    // u dynamickeho alokovani je prostor znam az pri run time, dostane klasickou promennou, ktera v sobe uchovava memory adresu prvniho prvku alokovaneho memory chunku, protoze to NENI KONSTANTA, tak muzeme zmenit, kam bude ukazovat tato nova memory adresa tohoto pointeru => pole = memoryaddress
+    // proto nemuzeme udelat sizeof() pro pointer z dynamickeho pole, ale muzeme to udelat pro konstantu s memory adresou ze statickeho pole
+    
+    // Dobra vec je, ze lidi, kteri C vytvorili, tak aby neudelali zbytecne velky zmatek, tak nechali zpusob k pristupovani prvku STEJNE u obou prvku
+    // u obou pripadech muze dojit k segmentation fault nebo k nedefinovanemu chovani programu a mozny buffer overflow
+
+    // u statickeho pole existuje jeste existuje tzv. array decay, coz znamena ze symblicky link pole premenime na pointer, je to pro to, abychom treba mohli pouzivat staticke pole z main do jine funkce, int *static_array_ptr = static_array, ted je do *static_array_ptr ulozen prvni prvek statickeho pole (z celeho pole - memory oblasti se stane pouze pointer na prvni prvek => &staticke_pole[0] - decay), posouvani se muze bud delat pomoci *(static_array_ptr + 1), nebo pomovi static_array_ptr[i] i++, s tim ze my posuneme tu adresu o jeden prvek (pointer arythmetic) a potom ten samotny pointer dereferencujeme, nemuzeme ale udelat
+    // (&static_array_ptr + 1) nebo *(&static_array_ptr + 1), to bychom posunuli cele pole o delku celeho pole + 1, toto plati i pro dynamicke pointery
+
+    // u statickeho pole je pole[i] int (pokud je pole typu int)
+    // u dynamickeho pole je pole[i] int (pokud je pole typu int), protoze int * (pointer na int je jen prvni prvek)
+
+    // kdyz dostaneme int *, tak ono je nejake pole memory a my dostaneme pointer na ten prvni prvek, takze my vubec nedostaneme ten prvek ale jenom pointer a tim k tim ostatnim prvkum pristupujeme a potom u statickeho pole je to jmeno symbolicky link, takze to jmeno je zamenitelne s memory adresou, takze taky jakoby nedostaneme prvek jenom celou oblast a C ma nejaky interni mechanismus jak indexovat ty prvky toho pole pomoci pole[i]? ze ano?
+
+    // ten "mechanismus" je implicitni array decay
+
+    char *path;
+
+    struct Node_Linked_List *new_node;
+    new_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *));
+
+    printf("memory address of root_node: %p\n", (void *)&root_node);
+    printf("memory address pointed to by root_node: %p\n", (void *)root_node);
+    printf("value pointed to by root_node: \n", *root_node);
+
+    printf("memory address of old_node: %p\n", (void *)&old_node);
+    printf("memory address pointed to by old_node: %p\n\n", (void *)old_node);
+    printf("value on the memory address pointed to by old_node: \n", **old_node); // 2 papirove pytlikove sacky
+
+    if (root_node != *old_node) { // pokud pointery ukazuji na stejne misto
+        for (int i = 0; i < (*old_node)->yes_no_states_i; i++) { // musim o jeden pytlik dovnitr a mam pointer na strukturu, pokud bych chtel strukturu => (**old_node).yes_no_states_i (protoze chci z pointeru NA STRUKTURU STRUKTURU => **)
+            if ( (*old_node)->yes_no_states[i] == EXIT_FAILURE) { // 1 (znamena, ze slozka jeste nebyla poslana) **(old_node->yes_no_states[i])
+                char *partial_path = (char *)malloc(strlen(*(*old_node)->dir_names[i])); // uz je s \0, takze uz nemusim s + 1
+                memcpy((void *)partial_path, (void *)(*old_node)->dir_names[i], strlen(**old_node).dir_names[i]);
+                // ted tam mam jmeno te slozky
+
+                path = (char *)malloc(strlen(**old_node).path) + strlen(partial_path); // nemusim resit \0, snprintf odstrani prvni \0, prida hned za nim dalsi string a na konec da \0 (necha ten druhy \0)
+                snprintf(path, strlen(**old_node).path + strlen(partial_path), "%s/%s", path, partial_path); // path noveho node
+
+                (*old_node)->yes_no_states[i] = EXIT_SUCCESS; // 0, protoze se odesle
+                (*old_node)->yes_no_states_i--;
+            }
+        }
+
+        // ted si chci vzit vsechny mozne informace o root_node (te slozky, kterou jsme dostali), tyto informace nam budou uzitecne k tomu, abychom vedeli, do jake slozky mame vniknou, co tam poslat a zase nejaky zpusob nazpatek
+        DIR *node_dir = opendir(path);
+        struct dirent *node_entry;
+
+
+        int number_of_elements = 1;
+        new_node->dir_names = (char**)malloc(sizeof(char *) * number_of_elements);
+        new_node->yes_no_states = (int *)malloc(sizeof(int) * number_of_elements);
+        for (int i = 0; (node_entry = readdir(node_dir)) != NULL; i++) { // muzu nadeklarovat vice promennych stejneho typu ve for loopu, ale nemuzu odlisne datove typy, jedine pomoci lokalni struct
+            char **new_temp_dir_names = realloc(new_node->dir_names, sizeof(char *) * number_of_elements); // C standard nic o tomto nerika, ale GNU libc kompilator rika, ze vrati stejnou memory adresu toho pointeru, ktery predame
+
+            char *name = node_entry->d_name;
+            size_t length_name = strlen(name);
+
+            new_temp_dir_names[i] = (char *)malloc(length_name);
+            strcpy(new_temp_dir_names[i], name);
+
+            if (node_entry->d_type == DT_REG) {
+                // EXIT_SUCCESS = 0
+                int yes = 0; // yes jakoze ano uz se tam nemusi nic delat
+                memcpy((void *)&new_node->yes_no_states[i], (void *)&yes, sizeof(int));
+                // file_data();
+            }
+            else if (node_entry->d_type == DT_DIR) {
+                // EXIT_FAILURE = 1
+                int *new_temp_yes_no_states = (int *)realloc(new_node->yes_no_states, sizeof(int) * number_of_elements);
+                int no = 1;
+                memcpy((void *)&new_temp_yes_no_states[i], (void *)&no, sizeof(int)); // memcpy chce void * pointery
+                printf("AVE CHRISTUS REX! %d\n", new_temp_yes_no_states[i]);
+                new_node->yes_no_states = new_temp_yes_no_states;
+                printf("AVE AVE CHRISTUS REX! %d\n", new_node->yes_no_states[i]);
+            }
+            new_node->dir_names = new_temp_dir_names;
+            number_of_elements++;
+        }
+        new_node->path = (char*)malloc(strlen(path));
+        memcpy((void*)new_node->path, (void *)path, strlen(path));
+
+        new_node->yes_no_states_i = number_of_elements - 1; // (*new_node).yes_no_states_i taky jde
+
+        new_node->previous_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *));
+        memcpy((void *)new_node->previous_node, (void *)old_node, sizeof(struct Node_Linked_List *));
+
+        *old_node->next_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *));
+        memcpy((void *)*old_node->next_node, (void *)&new_node, sizeof(struct Node_Linked_List *));
+    }
+    else {
+        path = (char *)malloc(strlen(root_node_path));
+        memcpy((void *)path, (void *)root_node_path, strlen(root_node_path));
+
+        **old_node->previous_node = NULL; // pointer ukazujici na hodnotu 0, tento pointer ma hodnotu 0 a je to nastaveno tak, ze jakakoliv spatna manipulace tohoto pointeru vytvori segmentation fault
+        *old_node->next_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *));
+        memcpy((void *)*old_node->next_node, (void *)&new_node, sizeof(struct Node_Linked_List *));
+    }
+}
+
+
+static void recursive_dir_browsing(char *path) {
+        // k tomu, abych umel vedet, kam presne jit (do jake slozky a v jakem poradi), tak musim implementovat linked list, proc? kdyz bych vstoupil do nejake slozky a ta mela dalsi a ta mela dalsi..., tak bych velice za chvili ztratil informaci o tom, jakou slozku mam otevrit, proto pro kazdy "level" musim udelat linked list, protoze ty soubory jsou usporadane jako strom => strom, binary tree ma 0 az max 2 potomky, tree ma 0 do nekonecna => takovy backtracking
+        
+        printf("\nAVE AVE CHRISTUS REX!\n");
+
+
+        // nastaveni informaci root_node
+
+        // nejdrive je potreba alokovat celou strukturu a potom kdyztak alokovat dalsi pointery a membery v one strukture
+        root_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *));
+        root_node_path = (char *)malloc(strlen(path));
+        memcpy((void *)root_node_path, (void *)path, strlen(path)); // path vyplnena, vse ostatni se vyplni ve funkci create_assign_next_node, kde pozor old_node a new_node JE root_node
+        
+        root_node = create_assign_next_node(root_node);
+        // dokonceni nastavovani informaci pro root_node
+
+        printf("\n\nroot_node yes_no_states\n");
+        for (int i = 0; i < root_node->yes_no_states_i; i++) {
+            printf("\n%d\n", root_node->yes_no_states[i]);
+        }
+        
+        printf("root_node dir_names\n");
+        for (int i = 0; i < root_node->yes_no_states_i; i++) {
+            printf("\n%s\n", root_node->dir_names[i]);
+        }
+
+        printf("root_node path: %s\n", root_node->path);
+        printf("root_node previous node: %p\n", (void *)root_node->previous_node); // toto je ok, jen vypisujeme jeho memory adresu, kam pointuje na 0x0, kdybychom chteli ziskat tu samotnou hodnotu pomoci dereferencovani, tak by to vyhodilo chybu segmentation fault!
+        printf("root_node next_node: %p\n", (void *)root_node->next_node);
+        printf("root_node yes_no_states_i: %d\n", root_node->yes_no_states_i);
+
+
+
+
+
+
+
+
+
+
+    //     // pro backtracking
+    //     for (;;) {
+    //         for (; (entry = readdir(dirstream)) != NULL;) { // initialization, updation nedelaji nic, jen se koukam, jestli entry nevrati NULL, pokud ano, chci s infinity loopem skoncit
+    //         // automaticky se to posune
+
+
+    //         if (strcmp(entry->d_name, "..") == 0) {
+    //             printf("\nAVE CHRISTUS REX!\n");
+    //             char temp_path[100];
+    //             snprintf(temp_path, 100, "%s/%s", path, entry->d_name);
+    //             printf("\n\ntemp_path: %s\n", temp_path);
+    //             char *result = change_path_curr_prev(temp_path);
+    //             printf("result: %s", result);
+    //             fflush(stdout);
+    //         }
+    //     }
+        
+        
+    // } 
+}
+
+static char *path_to_open(char *path) {
+    int uid = getuid(); // user ID
+    struct passwd *password = getpwuid(uid);
+    char *home_directory = password->pw_dir;
+
+    size_t path_len = strlen(path);
+    size_t home_directory_len = strlen(home_directory);
+
+
+    char *path_to_file = (char *)malloc(path_len + home_directory_len);
+    memset(path_to_file, 0, path_len + home_directory_len);
+
+    char *tilde_p = strstr(path, "~");
+    if ( tilde_p == NULL && strstr(path, "/") != NULL) { // kde se hleda, co se hleda
+        int tilde_index = (int)(tilde_p - path);
+        strcpy(path_to_file, path);
+    }
+    else if (tilde_p != NULL && strlen(path) == 1) {
+        strcpy(path_to_file, home_directory);
+    }
+    else if (tilde_p != NULL && strlen(path) > 1) {
+        strcpy(path_to_file, home_directory);
+        strcpy(path_to_file + home_directory_len, path + 1);
+    }
+    else {
+        printf("\nnejaka chyba");
+    }
+
+    return path_to_file;
+}
+
+static int ftp_dtp() {
+    // ~/Documets/FTP_SERVER
+    // => /home/marek
+
+    // char *final_path = path_to_open(path);
+    // printf("tady je path: %s\n", final_path);
+    // fflush(stdout);
+
+    fd_set readbitmask_stdin;
+    
+    char *user_data = (char *)malloc(MAX_LEN);
+    char *user_choice_dir_file = (char *)malloc(sizeof(char));
+    setvbuf(stdout, NULL, _IONBF, 0);
+    for (;;) { // setup, advance nic zvlastniho nedelaji
+        printf("\nchcete poslat soubor (f) nebo adresar (d): \n");
+        fflush(stdout);
+        
+        struct timeval timeout = { .tv_sec = 2, .tv_usec = 0}; // select zase muze zasahnout do teto struktury
+
+        FD_ZERO(&readbitmask_stdin); // select meni obsah toho fd_set, proto v loopu to musi byt inicializovano vzdy nove
+        FD_SET(STDIN, &readbitmask_stdin); // stdin pridavam do long => 1024 bits, je to typu long => 8 Bytes => 64 bits => 1024 / 64 => array 16 long
+        fflush(stdout);
+        int select_rv = select(NFDS, &readbitmask_stdin, NULL, NULL, &timeout); //  4 jakoze, 0 - stdin, 1 - stdout - 2, stderr - 3 => 3 + 1 = 4, 4 aby se nereklo
+
+        if (select_rv == -1) {
+            perror("select() selhal - ftp_dtp - stdin");
+            exit(EXIT_FAILURE);
+        }
+
+        if (select_rv == 1 || FD_ISSET(STDIN, &readbitmask_stdin)) { // pokud je stdin ready
+            // scanf ma tzv. scan set a potom si muzeme rict i kolik presne charakteru, potrebujeme
+            // tento scam set muze failnout, protoze kdyz zadam pred tim neco a zmacknu enter, tak se vezme jenom to neco a v stdin bufferu zustane \n, proto tenhle call uvidi to prvni \n a failne, proto musim ignorovat vsechny whitespaces pred skutecnym obsahem v stdin, to se dela vyznacenim mista pred %, flushnout by neslo, protoze flushovani je jenom pro output streamy, nebo by to nejspise slo flushnout tim loopem getchar()
+            // kdyz udelam &d, %s, %c, tak se vezme jen ta dana vec a ten zbytek zbyde v stdin
+            scanf(" %c", user_choice_dir_file); // white sprace ve formatu => ignoruji se whitespaces v tom bufferu
+            printf("\nzadejte path: ");
+            scanf(" %255[^\n]", user_data); // cti dokud se nenarazi na \n, to ^ znamena, ze chceme cist vsechnz charaktery krome za ^, kdyby to bylo bez toho ^, tak chci cist JENOM TY charaktery
+            printf("\n");
+            char *path = path_to_open(user_data);
+            // printf("path_to_open: %s", path);
+            recursive_dir_browsing(path);
+            // printf("user_data: %s\n", user_data);
+            
+        }
+        // else {
+        //     printf("\ntady\n");
+        //     fflush(stdout);
+        // }
+        // printf("\na\n");
+    }
+}
+
+int main() {
+    struct sockaddr_in server_control_info;
+    memset(&server_control_info, 0, sizeof(struct sockaddr_in)); // ujisteni, ze struiktura je opravdu prazdna, bez garbage values, v struct adrrinfo bych diky 
+    //tomu nastavit protokol TCP!
+
+    server_control_info.sin_family = AF_INET;
+    server_control_info.sin_port = htons(CONTROL_PORT); // htons => host to network short
+
+    // pokud je datovy typ nejaky typ pole nebo struktura, union apod., TAK TO MUSIM ZKOPIROVAT DO TOHO a nejde to jenom priradit!!
+    // naplneni hints.sin_addr
+    if (inet_pton(server_control_info.sin_family, "127.0.0.1", &server_control_info.sin_addr.s_addr) <= 0) { // pred a po hints.sin_addr nemusi byt ty zavorky a povazuji se za nadbytecne
+        perror("inet_pton() selhal - ftp_control");
+        exit(EXIT_FAILURE);
+    }
+
+    struct sockaddr_in server_data_info;
+    memset(&server_data_info, 0, sizeof(struct sockaddr_in));
+
+    server_data_info.sin_family = AF_INET;
+    server_data_info.sin_port = htons(DATA_PORT);
+
+    // "muze se do davat rovnou do te struktury, protoze ma jen jednoho clena a tam se kopiruji ty data a zrovna to vyjde na tu delku, ale kdyby tam byly dva cleny, tak je lepsi tam uvest samotneho clena te struktury", takhle je to napsane v serveru, ale tady to je to explicitne napsane, coz je best practice
+    if (inet_pton(server_data_info.sin_family, "127.0.0.1", &server_data_info.sin_addr.s_addr) == 0) {
+        perror("inet_pton selhal() - ftp_data");
+        exit(EXIT_FAILURE);
+    }
+
+    // pokazde kdyz se client pripoji, tak dostane novy nahodny port od OS, proto musi server udelat setsockopt SO_REUSABLE, protoze server nemenni port a binduje
+    // ten stejny
+
+    // client zahajuje control connection u FTP, potom se muze rozhoudnout, jestli zahaji server nebo client data connection
+    int ftp_control_socket; // vytvori se jakoby zakladni socket descriptor popisujici, ze bude komunikace pres sit a potom pomoci connect
+    // se klientovi priradi ten nahodny ephemeral port a ten socket descriptor se jakoby zmeni na communication socket descriptor
+    // socket take zalozi interni strukturu o tomto pripojeni
+    if ( (ftp_control_socket = socket(server_control_info.sin_family, SOCK_STREAM, 0)) == -1 ) { // type => SOCK_STREAM znazi jaky typ socketu to bude => pouzivajici TCP (bytes streams) nebo UDP (datagrams)
+        perror("socket selhal() - ftp_control");
+        exit(EXIT_FAILURE);
+    }
+    // 0 => OS vybere nejlepsi protokol pro ty specifikace, jinak ty protokoly jsou definovane v glibc netine/in.h
+
+    int ftp_data_socket;
+    if ( (ftp_data_socket = socket(server_data_info.sin_family, SOCK_STREAM, 0)) == -1) {
+        perror("socket() selhal - ftp_data");
+        exit(EXIT_FAILURE);
+    }
+
+    // client nemusi mit setsockopt SO_REUSEADDR, protoze se binduje k nejakemu stanovemu portu, client ma svuj lokalni port, takze se vzdycky zmeni
+
+    // u connect to musi byt oboustranne dane zavorkami, protoze == ma vetsi prioritu nez =
+    int ftp_control_com;
+    if ( (ftp_control_com = connect(ftp_control_socket, (struct sockaddr *)&server_control_info, sizeof(server_control_info) )) == -1 ) {
+        perror("connect() selhal - ftp_control");
+        exit(EXIT_FAILURE);
+    }
+
+    // proc se to typecastuje na struct sockaddr *, protoze sockaddr_in a sockaddr_in6 a sockaddr maji stejne rozlozeni pole family, takze se podle toho, jaka struktura se ma interne pouzivat, vsechno jsou to jenom data
+    int ftp_data_com;
+    if ( (ftp_data_com = connect(ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(server_data_info))) == -1) {
+        perror("connect() selhal - ftp_data");
+        exit(EXIT_FAILURE);
+    }
+    printf("ftp_control_com, ftp_data_com %d, %d", ftp_control_com, ftp_data_com);
+    printf("\n\n\n\nvse probehlo ok, jsem pripojeny \n\n\n\n");
+
+    ftp_dtp();
+
+    // > ma vetsi prioritu nez =
+    return EXIT_SUCCESS;
+}
