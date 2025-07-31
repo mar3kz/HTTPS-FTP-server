@@ -263,84 +263,86 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
     // ten "mechanismus" je implicitni array decay
 
     char *path;
-
+    num = 1;
+    int arr_i = 0;
     struct Node_Linked_List *new_node;
-    new_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *));
+    new_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List));
 
-    printf("memory address of root_node: %p\n", (void *)&root_node);
-    printf("memory address pointed to by root_node: %p\n", (void *)root_node);
-    printf("value pointed to by root_node: \n", *root_node);
+    // printf("memory address of root_node: %p\n", (void *)&root_node);
+    // printf("memory address pointed to by root_node: %p\n", (void *)root_node);
+    // printf("value pointed to by root_node: \n", *root_node);
 
-    printf("memory address of old_node: %p\n", (void *)&old_node);
-    printf("memory address pointed to by old_node: %p\n\n", (void *)old_node);
-    printf("value on the memory address pointed to by old_node: \n", **old_node); // 2 papirove pytlikove sacky
+    // printf("memory address of old_node: %p\n", (void *)&old_node);
+    // printf("memory address pointed to by old_node: %p\n\n", (void *)old_node);
+    // printf("value on the memory address pointed to by old_node: \n", **old_node); // 2 papirove pytlikove sacky
 
-    if (root_node != *old_node) { // pokud pointery ukazuji na stejne misto
-        for (int i = 0; i < (*old_node)->no_states; i++) { // musim o jeden pytlik dovnitr a mam pointer na strukturu, pokud bych chtel strukturu => (**old_node).no_states (protoze chci z pointeru NA STRUKTURU STRUKTURU => **)
+    // pokud pointery ukazuji na stejne misto
+    for (int i = 0; i < (*old_node)->no_states; i++) { // musim o jeden pytlik dovnitr a mam pointer na strukturu, pokud bych chtel strukturu => (**old_node).no_states (protoze chci z pointeru NA STRUKTURU STRUKTURU => **)
+        char *partial_path = (char *)malloc(strlen((*old_node)->dir_names[i])); // uz je s \0, takze uz nemusim s + 1
+        // memcpy((void *)partial_path, (void *)(*old_node)->dir_names[i], strlen( (**old_node).dir_names[i]));
+        strcpy(partial_path, (*old_node)->dir_names[i]);
+        // ted tam mame jmeno te slozky
 
-            char *partial_path = (char *)malloc(strlen((*old_node)->dir_names[i])); // uz je s \0, takze uz nemusim s + 1
-            memcpy((void *)partial_path, (void *)(*old_node)->dir_names[i], strlen( (**old_node).dir_names[i]));
-            // ted tam mam jmeno te slozky
+        size_t len = strlen( (*old_node)->path) + strlen(partial_path) + 1;
+        path = (char *)malloc(strlen((*old_node)->path) + strlen(partial_path)); // nemusim resit \0, snprintf odstrani prvni \0, prida hned za nim dalsi string a na konec da \0 (necha ten druhy \0)
+        snprintf(path, len + strlen("/"), "%s/%s", (*old_node)->path, partial_path); // path noveho node // +1 pro \0 (including the terminating null bytes)
 
-            path = (char *)malloc(strlen((*old_node)->path) + strlen(partial_path)); // nemusim resit \0, snprintf odstrani prvni \0, prida hned za nim dalsi string a na konec da \0 (necha ten druhy \0)
-            snprintf(path, strlen((*old_node)->path) + strlen(partial_path), "%s/%s", path, partial_path); // path noveho node
-
-            (*old_node)->no_states--;
-        }
-
-        // ted si chci vzit vsechny mozne informace o root_node (te slozky, kterou jsme dostali), tyto informace nam budou uzitecne k tomu, abychom vedeli, do jake slozky mame vniknou, co tam poslat a zase nejaky zpusob nazpatek
-        DIR *node_dir = opendir(path);
-        struct dirent *node_entry;
-
-
-        int number_of_elements = 1;
-        new_node->dir_names = (char**)malloc(sizeof(char *) * number_of_elements);
-        for (int i = 0; (node_entry = readdir(node_dir)) != NULL; i++) { // muzu nadeklarovat vice promennych stejneho typu ve for loopu, ale nemuzu odlisne datove typy, jedine pomoci lokalni struct
-
-
-            if (node_entry->d_type == DT_REG) {
-                // send_file();
-            }
-            else if (node_entry->d_type == DT_DIR) {
-                size_t len_dirname = strlen(node_entry->d_name);
-                memcpy((void *)new_node->dir_names[i], (void *)node_entry->d_name, len_dirname);
-
-                // protoze realloc potrebuje nejaky ukazatel na memory adresu a pozaduje void *, tak to muze mit formu int *, int **, int ***, jakykoliv datovy typ a proc tam neni *new_node->dir, protoze realloc() chce pointer na memory chunk a tento memory chunk muze byt jakehokoliv typu, realloc potrebuje jenom pointer na uplny zacatek tohoto pole, najde novy memory chunk, stary memory chunk dealokuje a zkopiruje puvodni data do noveho chunku, jak se ale dovime, kolik Bytes v tom chunku bylo na kopirovani, system ma tzv. memory allocator, software ktrery drzi metadata prave o tichto informacich o techto memory chunks
-                char **new_temp_dir_names = (char **)realloc(new_node->dir_names, sizeof(char *) * number_of_elements); // C standard nic o tomto nerika, ale GNU libc kompilator rika, ze vrati stejnou memory adresu toho pointeru, ktery predame
-                new_node->dir_names = new_temp_dir_names;
-            }
-            number_of_elements++;
-        }
-        new_node->path = (char*)malloc(strlen(path));
-        memcpy((void*)new_node->path, (void *)path, strlen(path));
-
-        new_node->no_states = number_of_elements - 1; // (*new_node).no_states taky jde
-
-        new_node->previous_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *));
-        memcpy((void *)new_node->previous_node, (void *)(*old_node), sizeof(struct Node_Linked_List *));
-
-        (*old_node)->next_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *)); // vzdy do zavorek, protoze -> ma vyssi prioritu nez *, takze se nejdrive vezme next_node a az potom ten dereference
-        memcpy((void *)(*old_node)->next_node, (void *)&new_node, sizeof(struct Node_Linked_List *));
-
-        return new_node; // new_node
+        (*old_node)->no_states--;
+        break; // tento loop staci pustit jenom jednou a mame vysledky
     }
-    else {
-        path = (char *)malloc(strlen(root_node_path));
-        memcpy((void *)path, (void *)root_node_path, strlen(root_node_path));
 
-        (*old_node)->previous_node = NULL; // pointer ukazujici na hodnotu 0, tento pointer ma hodnotu 0 a je to nastaveno tak, ze jakakoliv spatna manipulace tohoto pointeru vytvori segmentation fault => NULL (void *)0, nekdo rika, ze to je jako memory adresa 0, protoze memory adresa 0x0, protoze nejde dereferencovat (nejde se k ni dostat) a nekdo to vysvetluje jako prosta hodnota 0, pravda je, ze to je opravdu jen prosta hodnota 0 a ptr = 0 je stejne jako ptr = NULL, ale ten mechanismus je uplne stejny tomu s tou memory adresou
-        (*old_node)->next_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *));
-        memcpy((void *)(*old_node)->next_node, (void *)new_node, sizeof(struct Node_Linked_List *));
+    printf("\n\npath: %s\n\n", path);
 
-        return (*old_node); // old_node => root_node
+    // ted si chci vzit vsechny mozne informace o root_node (te slozky, kterou jsme dostali), tyto informace nam budou uzitecne k tomu, abychom vedeli, do jake slozky mame vniknou, co tam poslat a zase nejaky zpusob nazpatek
+    DIR *node_dir = opendir(path);
+    struct dirent *node_entry;
+
+    int number_of_elements = 1;
+    new_node->dir_names = (char**)malloc(sizeof(char *) * num);
+    for (; (node_entry = readdir(node_dir)) != NULL;) { // muzu nadeklarovat vice promennych stejneho typu ve for loopu, ale nemuzu odlisne datove typy, jedine pomoci lokalni struct
+
+        if (node_entry->d_type == DT_REG) {
+            // send_file();
+        }
+        else if (node_entry->d_type == DT_DIR && strcmp(node_entry->d_name, ".") != 0) {
+            size_t len_dirname = strlen(node_entry->d_name);
+            // memcpy((void *)new_node->dir_names[i], (void *)node_entry->d_name, len_dirname);
+            strcpy(new_node->dir_names[arr_i++], node_entry->d_name);
+
+            char **new_temp_dir_names = (char **)realloc(new_node->dir_names, sizeof(char *) * ++num); // C standard nic o tomto nerika, ale GNU libc kompilator rika, ze vrati stejnou memory adresu toho pointeru, ktery predame
+            new_node->dir_names = new_temp_dir_names;
+            new_node->no_states++;
+            // protoze realloc potrebuje nejaky ukazatel na memory adresu a pozaduje void *, tak to muze mit formu int *, int **, int ***, jakykoliv datovy typ a proc tam neni *new_node->dir, protoze realloc() chce pointer na memory chunk a tento memory chunk muze byt jakehokoliv typu, realloc potrebuje jenom pointer na uplny zacatek tohoto pole, najde novy memory chunk, stary memory chunk dealokuje a zkopiruje puvodni data do noveho chunku, jak se ale dovime, kolik Bytes v tom chunku bylo na kopirovani, system ma tzv. memory allocator, software ktrery drzi metadata prave o tichto informacich o techto memory chunks
+        }
     }
+    new_node->path = (char*)malloc(strlen(path));
+    memcpy((void*)new_node->path, (void *)path, strlen(path));
+
+    // new_node->no_states = (*new_node).no_states
+
+    new_node->previous_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *));
+    memcpy((void *)new_node->previous_node, (void *)(*old_node), sizeof(struct Node_Linked_List *));
+
+    (*old_node)->next_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *)); // vzdy do zavorek, protoze -> ma vyssi prioritu nez *, takze se nejdrive vezme next_node a az potom ten dereference
+    memcpy((void *)(*old_node)->next_node, (void *)new_node, sizeof(struct Node_Linked_List *));
+    // (*old_node)->previous_node = NULL; // pointer ukazujici na hodnotu 0, tento pointer ma hodnotu 0 a je to nastaveno tak, ze jakakoliv spatna manipulace tohoto pointeru vytvori segmentation fault => NULL (void *)0, nekdo rika, ze to je jako memory adresa 0, protoze memory adresa 0x0, protoze nejde dereferencovat (nejde se k ni dostat) a nekdo to vysvetluje jako prosta hodnota 0, pravda je, ze to je opravdu jen prosta hodnota 0 a ptr = 0 je stejne jako ptr = NULL, ale ten mechanismus je uplne stejny tomu s tou memory adresou
+
+    return new_node; // new_node
 }
 
+// u pouhych char *, jednotlivych pismen se nemusi davat \0 (NULL terminator), protoze to neni C-string
+// kdyz je neinicializovana promenna v C, tak C pro to nema zadne pravidla, ale kompilatory si udelaji sve vlastni prave pro tyto promenne (nastavi jim nejake hodnoty - zalezi to na kompilatoru)
+
 void fill_root_node(struct Node_Linked_List **root_node, char *path) {
+    num = 1;
+    int arr_i = 0;
+
     DIR *root_dir_stream = opendir(path);
     struct dirent *rds_entry;
 
-    (*root_node) = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *));
+    // protoze v te struct mam i staticke promenne, tak musim alokovat celou tu strukturu a potom jednotlive ty pointery
+    (*root_node) = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List));
+    memset((void *)(*root_node), 0, sizeof(struct Node_Linked_List));
     // memset((void *)(*root_node), 0, sizeof(struct Node_Linked_List *)); // vynulovani, protoze next_node asi neudelame automaticky
 
     (*root_node)->path = (char *)malloc(strlen(path));
@@ -351,22 +353,27 @@ void fill_root_node(struct Node_Linked_List **root_node, char *path) {
     (*root_node)->dir_names = (char **)calloc(sizeof(char *) * num, sizeof(char *));
 
     for (int i = 0; (rds_entry = readdir(root_dir_stream)) != NULL ; i++) {
-
+        // printf("%s\n", rds_entry->d_name);
         if (rds_entry->d_type == DT_REG) {
             // send_file()
         }
-        else if (rds_entry->d_type == DT_DIR) {
+        else if (rds_entry->d_type == DT_DIR && strcmp(rds_entry->d_name, ".") != 0) {
             size_t len_dirname = strlen(rds_entry->d_name);
-            memcpy((void *)(*root_node)->dir_names, (void *)rds_entry->d_name, len_dirname); // realloc() premeni velikost toho bufferu a necha tam ty stejne data
+            // to ze si naalokujeme pointer, ktery ma 8 Bytes, tak to neznamena, ze muzeme udelat p[0], protoze ten pointer jeste NIKAM neukazuje, a proto to vyhodi segmentation fault, je to jenom 8 Bytes pointeru, ktery ZATIM NIKAM NEUKAZUJE! proto se nejdrive musi naalokovat
+            (*root_node)->dir_names[arr_i] = (char *)malloc(len_dirname); // vraci pointer na void *, proto to na leve strane muze byt COKOLIV => int **, int ***, char ****, char *
+            strcpy((*root_node)->dir_names[arr_i++], rds_entry->d_name); // i s \0
+            // memcpy((void *)(*root_node)->dir_names[num-1], (void *)rds_entry->d_name, len_dirname); // realloc() premeni velikost toho bufferu a necha tam ty stejne data, toto zkopiruje jen pouha data bez \0!
+            printf("\n\n root: %s\n", rds_entry->d_name);
+            fflush(stdout);
 
-            char **temp_dir_names = (char **)realloc((*root_node)->dir_names, sizeof(char *) * ++num);
-
+            char **temp_dir_names = (char **)realloc((*root_node)->dir_names, sizeof(char *) * ++num); // bez tohoto if statementu by se zbytecne alokovalo o jeden char * navic
             (*root_node)->dir_names = temp_dir_names;
-        }
-        (*root_node)->no_states++;
-    }
-    (*root_node)->previous_node = NULL;
 
+            (*root_node)->no_states++;
+        }
+    }
+    printf("%d %d", arr_i, num);
+    (*root_node)->previous_node = NULL;
 }
 
 
@@ -389,24 +396,51 @@ static void recursive_dir_browsing(char *path) {
         fill_root_node(&root_node, path);
         // dokonceni nastavovani informaci pro root_node
 
-        printf("\n\nroot_node no_states\n");
-        for (int i = 0; i < root_node->no_states; i++) {
-            printf("\n%d\n", 10);
-        }
-        
-        // printf("root_node dir_names\n");
+        // printf("\n\nroot_node no_states\n");
         // for (int i = 0; i < root_node->no_states; i++) {
-        //     printf("\n%s\n", root_node->dir_names[i]);
+        //     printf("\n%d\n", 10);
         // }
+        
+        printf("\n\nroot_node dir_names\n\n\n");
+        printf("no_states: %d\n", root_node->no_states);
+        for (int i = 0; i < root_node->no_states; i++) {
+            printf("\ni: %d", i);
+            printf("\n%s\n", root_node->dir_names[i]);
+        }
 
-        printf("root_node path: %s\n", root_node->path);
-        printf("root_node previous node: %p\n", (void *)root_node->previous_node); // toto je ok, jen vypisujeme jeho memory adresu, kam pointuje na 0x0, kdybychom chteli ziskat tu samotnou hodnotu pomoci dereferencovani, tak by to vyhodilo chybu segmentation fault!
-        printf("root_node next_node: %p\n", (void *)root_node->next_node);
-        printf("root_node no_states: %d\n", root_node->no_states);
+        // printf("root_node path: %s\n", root_node->path);
+        // printf("root_node previous node: %p\n", (void *)root_node->previous_node); // toto je ok, jen vypisujeme jeho memory adresu, kam pointuje na 0x0, kdybychom chteli ziskat tu samotnou hodnotu pomoci dereferencovani, tak by to vyhodilo chybu segmentation fault!
+        // printf("root_node next_node: %p\n", (void *)root_node->next_node);
+        // printf("root_node no_states: %d\n", root_node->no_states);
+
+        struct Node_Linked_List *new_node;
+        new_node = create_assign_next_node(&root_node);
+
+        printf("\n\nno_states: %d", new_node->no_states);
+        printf("\n\npath: %s", new_node->path);
+        printf("\n\nroot_node address to a structure: %p", (void *)root_node);
+        printf("\n\nnew_node previous: %p", (void *)new_node->previous_node);
+
+        for (int i = 0; i < new_node->no_states; i++) {
+            printf("\nnames: %s", new_node->dir_names[i]);
+        }
+
+        printf("\nnext_node - root_node: %p", (void *)root_node->previous_node);
+        printf("\nnew_node - memory address to a structure: %p", (void *)new_node);
+
+        printf("\n\n\nnew_node x: %p", (void *)new_node);
+        // printf("\nnew_node *: %p", (void *)*new_node);
+        printf("\nnew_node &: %p", (void *)&new_node);
+
+        printf("\n\n\nroot_node x: %p", (void *)root_node);
+        // printf("\nroot_node *: %p", (void *)*root_node);
+        printf("\nroot_node &: %p", (void *)&root_node);
 
 
 
-
+        // struct Node_Linked_List *new_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List));
+        // new_node = create_assign_next_node(&root_node); // return kopiruje data do pointeru automaticky pokud ta funkce vraci typ struct, pokud se vraci string literal, tak to nezanikne a je to jenom read-only, pokud lokalni pole, promenna, tak to zanikne
+        // // protoze C je by value jazyk, tak cokoliv co ma value tak nezanikne, krome poli na vlastnim stacku a pointeru na vlastnim stacku
 
 
 
