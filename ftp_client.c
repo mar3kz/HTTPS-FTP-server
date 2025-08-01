@@ -159,7 +159,7 @@ char *change_path_curr_prev(char *path) {
     return final_buffer;
 }
 
-static void file_data(char *path, char *type) {
+static void send_file(char *path) {
     // O => open() flags
     // S => file mode bits
     // F => fcntl() prikazy
@@ -167,29 +167,37 @@ static void file_data(char *path, char *type) {
     printf("\npath: %s\n", path);
     struct dirent *entry = readdir(dirstream_check);
 
-    if (entry->d_type == DT_REG && *type == 'f') {
-        int fd = open(path, O_CREAT | O_APPEND | O_RDONLY, S_IRWXU | S_IRWXG, S_IRWXO, S_ISUID); // 4777 => spusteni s pravy vlastnika, vsichny read, write, execute
+        // pokud to nebude k otevreni, tak by to melo file permissions 4777 // umask nemuze NIJAK ovlivnit setuid bit
+        // open(path, O_CREAT | O_APPEND | O_RDONLY, S_IRWXU | S_IRWXG, S_IRWXO, S_ISUID); // 4777 => spusteni s pravy vlastnika, vsichny read, write, execute
+        int fd = open(path, O_RDONLY | O_NOFOLLOW); // jen cteni, pokud je pathname symbolicky link, open() selze
         if (fd == -1) {
-            perror("open() selhal - prepare_ftp_dtp_data_struct");
+            perror("open() selhal - send_file()");
             exit(EXIT_FAILURE);
         }
 
         struct stat status_file;
         int fstat_rv = fstat(fd, &status_file);
         if (fstat_rv == -1) {
-            perror("fstat() selhal - prepare_ftp_dtp_data_struct");
+            perror("fstat() selhal - send_file()");
             exit(EXIT_FAILURE);
         }
 
         off_t offset_length_file = status_file.st_size;
 
-        char *file_data = (char *)malloc(offset_length_file);
+        char *file_data = (char *)malloc(offset_length_file + 1);
 
-        ssize_t read_rv = read(fd, file_data, offset_length_file);
-        if (read_rv == -1) {
-            perror("read() selhal - prepare_ftp_dtp_data_struct");
-            exit(EXIT_FAILURE);
+        ssize_t read_rv; // read muze vratit mene Bytes nez chceme
+        for (; (read_rv = read(fd, file_data, offset_length_file)) != offset_length_file;) {
+            if (read_rv == -1) {
+                perror("read() selhal - send_file()");
+                exit(EXIT_FAILURE);
+            }
+            else if (read_rv == 0) {
+                fprintf(stderr, "EOF read - send_file()");
+                exit(EXIT_FAILURE);
+            }
         }
+        file_data[read_rv] = '\0';
 
         char *username = (char *)malloc(MAX_LEN);
         getlogin_r(username, MAX_LEN);
@@ -198,10 +206,15 @@ static void file_data(char *path, char *type) {
             exit(EXIT_FAILURE);
         }
 
-        obj.path = path;
-        obj.owner = username;
-        obj.file_length = offset_length_file;
-    }
+        
+
+
+
+
+
+
+
+        
 }
 
 struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_node) {
@@ -268,12 +281,11 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
     struct Node_Linked_List *new_node;
     new_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List));
 
-    // printf("memory address of root_node: %p\n", (void *)&root_node);
-    // printf("memory address pointed to by root_node: %p\n", (void *)root_node);
-    // printf("value pointed to by root_node: \n", *root_node);
+    printf("\n\ncreate_assign old_node: %p", (void *)old_node);
+    printf("\ncreate_assign *old_node: %p", (void *)*old_node);
+    printf("\ncreate_assign &old_node: %p", (void *)&old_node);
+    
 
-    // printf("memory address of old_node: %p\n", (void *)&old_node);
-    // printf("memory address pointed to by old_node: %p\n\n", (void *)old_node);
     // printf("value on the memory address pointed to by old_node: \n", **old_node); // 2 papirove pytlikove sacky
 
     // pokud pointery ukazuji na stejne misto
@@ -320,12 +332,18 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
 
     // new_node->no_states = (*new_node).no_states
 
-    new_node->previous_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *));
+    new_node->previous_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *)); // alokuje se nove pole, proto nebude mit stejnou memory adresu jako root_node
     memcpy((void *)new_node->previous_node, (void *)(*old_node), sizeof(struct Node_Linked_List *));
 
     (*old_node)->next_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *)); // vzdy do zavorek, protoze -> ma vyssi prioritu nez *, takze se nejdrive vezme next_node a az potom ten dereference
     memcpy((void *)(*old_node)->next_node, (void *)new_node, sizeof(struct Node_Linked_List *));
     // (*old_node)->previous_node = NULL; // pointer ukazujici na hodnotu 0, tento pointer ma hodnotu 0 a je to nastaveno tak, ze jakakoliv spatna manipulace tohoto pointeru vytvori segmentation fault => NULL (void *)0, nekdo rika, ze to je jako memory adresa 0, protoze memory adresa 0x0, protoze nejde dereferencovat (nejde se k ni dostat) a nekdo to vysvetluje jako prosta hodnota 0, pravda je, ze to je opravdu jen prosta hodnota 0 a ptr = 0 je stejne jako ptr = NULL, ale ten mechanismus je uplne stejny tomu s tou memory adresou
+
+    printf("\n\nold_node->next_node: %p", (void *)((*old_node)->next_node));
+    printf("\nnext_node: %p", (void *)new_node);
+
+    printf("\n\nnew_node->previous_node: %p", (void *)(new_node->previous_node));
+    printf("\nprevious_node: %p", (void *)(*old_node));
 
     return new_node; // new_node
 }
@@ -394,48 +412,18 @@ static void recursive_dir_browsing(char *path) {
 
         struct Node_Linked_List *root_node;
         fill_root_node(&root_node, path);
-        // dokonceni nastavovani informaci pro root_node
 
-        // printf("\n\nroot_node no_states\n");
-        // for (int i = 0; i < root_node->no_states; i++) {
-        //     printf("\n%d\n", 10);
-        // }
-        
-        printf("\n\nroot_node dir_names\n\n\n");
-        printf("no_states: %d\n", root_node->no_states);
-        for (int i = 0; i < root_node->no_states; i++) {
-            printf("\ni: %d", i);
-            printf("\n%s\n", root_node->dir_names[i]);
-        }
-
-        // printf("root_node path: %s\n", root_node->path);
-        // printf("root_node previous node: %p\n", (void *)root_node->previous_node); // toto je ok, jen vypisujeme jeho memory adresu, kam pointuje na 0x0, kdybychom chteli ziskat tu samotnou hodnotu pomoci dereferencovani, tak by to vyhodilo chybu segmentation fault!
-        // printf("root_node next_node: %p\n", (void *)root_node->next_node);
-        // printf("root_node no_states: %d\n", root_node->no_states);
+        printf("\n\nrecursive_dir root_node: %p", (void *)root_node);
+        printf("\nrecursive_dir &root_node: %p", (void *)&root_node);
 
         struct Node_Linked_List *new_node;
         new_node = create_assign_next_node(&root_node);
 
-        printf("\n\nno_states: %d", new_node->no_states);
-        printf("\n\npath: %s", new_node->path);
-        printf("\n\nroot_node address to a structure: %p", (void *)root_node);
-        printf("\n\nnew_node previous: %p", (void *)new_node->previous_node);
 
-        for (int i = 0; i < new_node->no_states; i++) {
-            printf("\nnames: %s", new_node->dir_names[i]);
-        }
 
-        printf("\nnext_node - root_node: %p", (void *)root_node->previous_node);
-        printf("\nnew_node - memory address to a structure: %p", (void *)new_node);
-
-        printf("\n\n\nnew_node x: %p", (void *)new_node);
-        // printf("\nnew_node *: %p", (void *)*new_node);
-        printf("\nnew_node &: %p", (void *)&new_node);
-
-        printf("\n\n\nroot_node x: %p", (void *)root_node);
-        // printf("\nroot_node *: %p", (void *)*root_node);
-        printf("\nroot_node &: %p", (void *)&root_node);
-
+        // for (int i = 0; i < new_node->no_states; i++) {
+        //     printf("\nnames: %s", new_node->dir_names[i]);
+        // }
 
 
         // struct Node_Linked_List *new_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List));
