@@ -44,6 +44,17 @@ void *function6(void *) {
     }
 }
 
+
+struct Try2 {
+    int a;
+};
+
+void change_value(struct Try2 *p) {
+    // p->a = 10; // zmeni se GLOBALNE!!
+    struct Try2 x = { .a = 20 }; // zmeni se LOKALNE!!
+    p = &x;
+}
+
 int main()
 {
     // size_t sizearray = 3;
@@ -108,14 +119,28 @@ int main()
     //     sleep(2);
     // }
 
-    struct Try {
-        int a;
-    };
-    struct Try *obj = malloc(sizeof(struct Try));
-    obj->a = 10;
+    // struct Try {
+    //     int a;
+    // };
+    // struct Try *obj = malloc(sizeof(struct Try));
+    // obj->a = 10;
 
-    // struct Try *p = &obj;
-    struct Try **pp = &obj;
+    // // struct Try *p = &obj;
+    // struct Try **pp = &obj;
+
+    struct Try2 *p = (struct Try2 *)malloc(sizeof(struct Try2)); // na heapu
+    p->a = 5;
+    printf("\n\na pred: %d", p->a);
+
+    change_value(p);
+    printf("\n\na po: %d", p->a);
+
+    // struct Try2 **pp; // na stacku
+    // pp = &p;
+    struct Try2 **pp = malloc(sizeof(struct Try2 *)); // na heapu
+    pp = &p;
+    
+
 
     // int a = 10;
     // int *p = &a;
@@ -129,6 +154,6 @@ int main()
     // printf("\nhodnota, kam ukazuje pp: %d\n", **pp);
     // printf("\nmemory adresa, kde je p: %p\n", (void *)&pp);
 
-    printf("%d", (**pp).a);
+    // printf("%d", (**pp).a);
 
 }
