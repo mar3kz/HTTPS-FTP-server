@@ -242,6 +242,24 @@ char **delete_dir_names_i(char **dir_names, int no_states, int i_to_delete) {
     return new_dir_names;
 }
 
+void delete_node(struct Node_Linked_List **node_to_delete, struct Node_Linked_List *node_change_info) {
+    // pro pointer node_change_info se udela kopie (udela se nova memory adresa/ulozeni do registru) ta memory adresa, kam ten originalni pointer ukazuje, a pokud zmenime obsah memory pomoci ->, tak se ukaze globalne, ale pokud se to zmeni pomoci =, tak to probehne jenom lokalne
+    // pokud bychom chteli zmenit CELY pointer na treba jinou strukturu, tak bychom museli z pointeru udelat pointer na pointer
+
+
+    // az se narazi na 0 no_states, budeme se chtit vratit nazpatek a k tomu bude dobre dealokovat vsechny nodes, ktere uz maji data (files) odeslane, proto potrebujeme dealokovat vsechny membery te struct ale i pointer na tu struct samotny, proto **node_to_delete (protoze ted uz dodrzuji "konvenci", JINAK BY TO SLO I S POUHYM JEDNO LEVELOVYM POINTEREM)
+
+    // protoze mame jak ten pointer v memory, do ktereho alokujeme velikost te struktury, tak se tak alokuji i ty "staticke promenne", ale protoze, potom mame nejake pointery, tak ty potrebuji svoje vlastni alokovani, proto se musi dealokovat osamostatne, jinak kdyz dealokujeme ten hlavni pointer na tu strukturu, tak ztratime ten pointer na strukturu, takze vznikne memory leak na ten dynamicky pointer, ale potom az dealokujeme tu memory pro ten hlavni pointer, tak se tak dealokuji i ty staticke promenne
+
+    free((*node_to_delete)->path);
+    free((*node_to_delete)->dir_names); // diky memory allocator staci jenom pointer na zacatek teto memory oblasti, memory allocator ma metadata o teto memory oblasti a vi presne, kolik Bytes tam je
+    free((*node_to_delete)->previous_node);
+    free((*node_to_delete)->next_node);
+    free((*node_to_delete));
+
+    node_change_info->next_node = NULL;  
+}
+
 struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_node) {
     // tato funkce vrati novy node (dalsi slozka)
     // chci se podivat na informace node, ktery dostaneme, na jeho path, dirnames, states a prvni, kde bude v states 1, tak nastavime node, ktery jsme dostali 1 a path noveho nodu nastavime na prave tuto path a chceme nastavit referenci (pointer) na node, ktery jsme dostali
@@ -314,29 +332,48 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
     
 
     // printf("value on the memory address pointed to by old_node: \n", **old_node); // 2 papirove pytlikove sacky
+   
+    /*
+    // tato podminka je zbytecna, protoze kdybychom meli v root jenom soubory, tak by se uz poslali, pokud ne, tak mame vice nez nebo jednu no_states a pokud bychom sli o jeden level nize, tak pokud by ta slozka mela jenom soubory, tak mame path z tamte pred ni, protoze TA SLOZKA PRED NI MELA no_states vice nebo rovno no_states nez 1! protoze je to zbytecne
+    */
+    // toto bylo pred tim nez jsem zjistil, ze pokud odesleme vsechny soubory, tak se vratime na 0. index do dir_names v old_node, to ale bude fungovat pokud je tam vice nez dve podslozky, pokud nejsou, tak jsme prave tady
+    // ne, toto nahore neni pravda, pokud mame nejakou slozku X levelu dopredu, kde uz nejsou zadne slozky, tak se musime podivat, jestli pred tim byly min 2 slozky, dve protoze jedna slozka se odecte, protoze jsme ji uz precetli, pokud je tam dalsi slozka, tak path bude ona sama, pokud to tak neni, tak new_node, MUSI BYT old_node, kde tedy NENI dalsi slozka, pokud no_states == 0, to znamena, ze files uz byly odeslany A MUSIME POKRACOVAT V BACKTRACKINGU, ale protoze se v tom kodu pri posilani uz nacitani no_states, to znamena, ze 0 no states je DEFAULTNI, tak si musime udelat novou promennou, kterou VZDY BUDEME KONTROLOVAT, anychom vedeli, jestli mame vubec posilat soubory nebo ne
 
-    // pokud pointery ukazuji na stejne misto
-    for (int i = 0; i < (*old_node)->no_states; i++) { // musim o jeden pytlik dovnitr a mam pointer na strukturu, pokud bych chtel strukturu => (**old_node).no_states (protoze chci z pointeru NA STRUKTURU STRUKTURU => **)
-        char *partial_path = (char *)malloc(strlen((*old_node)->dir_names[i])); // uz je s \0, takze uz nemusim s + 1
-        // memcpy((void *)partial_path, (void *)(*old_node)->dir_names[i], strlen( (**old_node).dir_names[i]));
-        strcpy(partial_path, (*old_node)->dir_names[i]);
-        // ted tam mame jmeno te slozky
+    if ( (*old_node)->no_states >= 1) {
+        for (int i = 0; i < (*old_node)->no_states; i++) { // musim o jeden pytlik dovnitr a mam pointer na strukturu, pokud bych chtel strukturu => (**old_node).no_states (protoze chci z pointeru NA STRUKTURU STRUKTURU => **)
+            char *partial_path = (char *)malloc(strlen((*old_node)->dir_names[i])); // uz je s \0, takze uz nemusim s + 1
+            // memcpy((void *)partial_path, (void *)(*old_node)->dir_names[i], strlen( (**old_node).dir_names[i]));
+            strcpy(partial_path, (*old_node)->dir_names[i]);
+            // ted tam mame jmeno te slozky
 
-        size_t len = strlen( (*old_node)->path) + strlen(partial_path) + 1;
-        path = (char *)malloc(strlen((*old_node)->path) + strlen(partial_path)); // nemusim resit \0, snprintf odstrani prvni \0, prida hned za nim dalsi string a na konec da \0 (necha ten druhy \0)
-        snprintf(path, len + strlen("/"), "%s/%s", (*old_node)->path, partial_path); // path noveho node // +1 pro \0 (including the terminating null bytes)
-        
-        printf("\n\nTO, CO SE VYMAZE: %s, %d", (*old_node)->dir_names[i], (*old_node)->no_states);
-        (*old_node)->no_states--;
+            size_t len = strlen( (*old_node)->path) + strlen(partial_path) + 1; // pro /
+            path = (char *)malloc(strlen((*old_node)->path) + strlen(partial_path) + 1); // +1 pro / // nemusim resit \0, snprintf odstrani prvni \0, prida hned za nim dalsi string a na konec da \0 (necha ten druhy \0)
+            snprintf(path, len, "%s/%s", (*old_node)->path, partial_path); // path noveho node // +1 pro \0 (including the terminating null bytes)
+            
+            printf("\n\nTO, CO SE VYMAZE: %s, %d", (*old_node)->dir_names[i], (*old_node)->no_states);
+            (*old_node)->no_states--;
 
-        (*old_node)->dir_names = delete_dir_names_i((*old_node)->dir_names, (*old_node)->no_states, i);
-        printf("\n%d", (*old_node)->no_states);
-        // memset((*old_node)->dir_names[i], 0, strlen((*old_node)->dir_names[i])); // jakoby "free()"
+            (*old_node)->dir_names = delete_dir_names_i((*old_node)->dir_names, (*old_node)->no_states, i);
+            printf("\n%d, %s, %s, %s\n\n", (*old_node)->no_states, path, (*old_node)->path, partial_path);
+            // memset((*old_node)->dir_names[i], 0, strlen((*old_node)->dir_names[i])); // jakoby "free()"
 
-        break; // tento loop staci pustit jenom jednou a mame vysledky
+            break; // tento loop staci pustit jenom jednou a mame vysledky
+        }
     }
+    else {
+        // kdyz bude slozka, kde jsou soubory a jedna dalsi slozka, tak se koukne na tu slozku, ten stary node, s touhle slozkou bude mit v dir_names tuto slozku, udela se novy node, kde bude path prave tato slozka, u stareho node se udela -- u no_states, pokud v teto slozce bude dalsi slozka, tak se bude pokracovat, ale pokud ne, tak se musi jit na backtracking, to se musi vratit new_node jako old_node, potom se udela novy node, zkoukne se tato podminka a pokud bude else (budeme tady), tak vime, ze uz se ty soubory poslali a MUSIME vratit previous_node jako new_node
+
+        if ((*old_node)->previous_node == root_node) {
+            // jestli root_node ma 0 no_states, tak uz je konec a dostali jsme se uplne na vrchol
+        }
+        else {
+            return (*old_node)->previous_node;
+        }
+    }
+    
 
     // printf("\n\npath: %s\n\n", path);
+
 
     // ted si chci vzit vsechny mozne informace o root_node (te slozky, kterou jsme dostali), tyto informace nam budou uzitecne k tomu, abychom vedeli, do jake slozky mame vniknou, co tam poslat a zase nejaky zpusob nazpatek
     DIR *node_dir = opendir(path);
@@ -348,12 +385,13 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
 
         if (node_entry->d_type == DT_REG) {
             // send_file();
+            printf("\nfile %s sent", node_entry->d_name);
         }
-        else if (node_entry->d_type == DT_DIR && strcmp(node_entry->d_name, ".") != 0) {
+        else if (node_entry->d_type == DT_DIR && strcmp(node_entry->d_name, ".") != 0 && strcmp(node_entry->d_name, "..") != 0) {
             size_t len_dirname = strlen(node_entry->d_name);
             // memcpy((void *)new_node->dir_names[i], (void *)node_entry->d_name, len_dirname);
             strcpy(new_node->dir_names[arr_i++], node_entry->d_name);
-            printf("\nTO, CO ZUSTANE: %s", node_entry->d_name);
+            // printf("\nTO, CO ZUSTANE: %s", node_entry->d_name);
             char **new_temp_dir_names = (char **)realloc(new_node->dir_names, sizeof(char *) * ++num); // C standard nic o tomto nerika, ale GNU libc kompilator rika, ze vrati stejnou memory adresu toho pointeru, ktery predame
             new_node->dir_names = new_temp_dir_names;
             new_node->no_states++;
@@ -361,12 +399,8 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
         }
     }
 
-    if ( no_states_check(new_node) == 0) {
-        fprintf(stdin, "\nvse probehlo OK, ftp_client poslal vse soubory\n");
-        exit(EXIT_SUCCESS);
-    }
-
     new_node->path = (char*)malloc(strlen(path));
+    printf("\nnew_node->path %s", path);
     memcpy((void*)new_node->path, (void *)path, strlen(path));
 
     // new_node->no_states = (*new_node).no_states
@@ -376,6 +410,21 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
 
     (*old_node)->next_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *)); // vzdy do zavorek, protoze -> ma vyssi prioritu nez *, takze se nejdrive vezme next_node a az potom ten dereference
     memcpy((void *)(*old_node)->next_node, (void *)new_node, sizeof(struct Node_Linked_List *));
+
+
+
+    
+
+    if ( no_states_check(new_node) == 0) { // uz tam neni zadna slozka
+        // nejdrive se koukneme, jestli je v node nejaka slozka, pokud ne, tak to znamena, ze muze zacit proces backtracking, na tuto podminku se ptame az na konci teto funkce, protoze budeme chtit free() cely node, aby nas to nejak netrapilo/nezmatlo a kdybychom chteli udelat free() toho node, kdyz jsou pointery uninitialized, tak by to bylo undefined behaviour (UB), zatimco JDE BEZ PROBLEMU free() NULL pointer, proto se ta no ptame az na konci
+        // (*old_node)->next_node = NULL; // toto tady nemusi byt, protoze to delame v delete_node()
+        fprintf(stdin, "\nvse probehlo OK, ftp_client poslal vse soubory v jednom node (jedne slozce/adresari)\n");
+        return (*old_node);
+        // delete_node(&new_node, (*old_node));
+
+        // protoze jsme si udelali funkci, ktera nam realokuje to pole aby bylo vzdycky plne hodnot, ktere urcite jeste nebyly poslany, tak muzeme udelat "novy node", kde jenom zmenime path na novou slozku/adresar, ktera jeste nebyla poslana a vratime TEN STARY NODE, toto bude fungovat jen pokud mame 2 a vice dalsich podslozek
+    }
+   
     // (*old_node)->previous_node = NULL; // pointer ukazujici na hodnotu 0, tento pointer ma hodnotu 0 a je to nastaveno tak, ze jakakoliv spatna manipulace tohoto pointeru vytvori segmentation fault => NULL (void *)0, nekdo rika, ze to je jako memory adresa 0, protoze memory adresa 0x0, protoze nejde dereferencovat (nejde se k ni dostat) a nekdo to vysvetluje jako prosta hodnota 0, pravda je, ze to je opravdu jen prosta hodnota 0 a ptr = 0 je stejne jako ptr = NULL, ale ten mechanismus je uplne stejny tomu s tou memory adresou
 
     // printf("\n\nold_node->next_node: %p", (void *)((*old_node)->next_node));
@@ -389,24 +438,6 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
 
 // u pouhych char *, jednotlivych pismen se nemusi davat \0 (NULL terminator), protoze to neni C-string
 // kdyz je neinicializovana promenna v C, tak C pro to nema zadne pravidla, ale kompilatory si udelaji sve vlastni prave pro tyto promenne (nastavi jim nejake hodnoty - zalezi to na kompilatoru)
-
-void delete_node(struct Node_Linked_List **node_to_delete, struct Node_Linked_List *node_change_info) {
-    // pro pointer node_change_info se udela kopie (udela se nova memory adresa/ulozeni do registru) ta memory adresa, kam ten originalni pointer ukazuje, a pokud zmenime obsah memory pomoci ->, tak se ukaze globalne, ale pokud se to zmeni pomoci =, tak to probehne jenom lokalne
-    // pokud bychom chteli zmenit CELY pointer na treba jinou strukturu, tak bychom museli z pointeru udelat pointer na pointer
-
-
-    // az se narazi na 0 no_states, budeme se chtit vratit nazpatek a k tomu bude dobre dealokovat vsechny nodes, ktere uz maji data (files) odeslane, proto potrebujeme dealokovat vsechny membery te struct ale i pointer na tu struct samotny, proto **node_to_delete (protoze ted uz dodrzuji "konvenci", JINAK BY TO SLO I S POUHYM JEDNO LEVELOVYM POINTEREM)
-
-    // protoze mame jak ten pointer v memory, do ktereho alokujeme velikost te struktury, tak se tak alokuji i ty "staticke promenne", ale protoze, potom mame nejake pointery, tak ty potrebuji svoje vlastni alokovani, proto se musi dealokovat osamostatne, jinak kdyz dealokujeme ten hlavni pointer na tu strukturu, tak ztratime ten pointer na strukturu, takze vznikne memory leak na ten dynamicky pointer, ale potom az dealokujeme tu memory pro ten hlavni pointer, tak se tak dealokuji i ty staticke promenne
-
-    free((*node_to_delete)->path);
-    free((*node_to_delete)->dir_names); // diky memory allocator staci jenom pointer na zacatek teto memory oblasti, memory allocator ma metadata o teto memory oblasti a vi presne, kolik Bytes tam je
-    free((*node_to_delete)->previous_node);
-    free((*node_to_delete)->next_node);
-    free((*node_to_delete));
-
-    node_change_info->next_node = NULL;  
-}
 
 void fill_root_node(struct Node_Linked_List **root_node, char *path) {
     num = 1;
@@ -433,7 +464,7 @@ void fill_root_node(struct Node_Linked_List **root_node, char *path) {
         if (rds_entry->d_type == DT_REG) {
             printf("\nfile %s sent", rds_entry->d_name);
         }
-        else if (rds_entry->d_type == DT_DIR && strcmp(rds_entry->d_name, ".") != 0) {
+        else if (rds_entry->d_type == DT_DIR && strcmp(rds_entry->d_name, ".") != 0 && strcmp(rds_entry->d_name, "..") != 0) {
             // printf("\nentry: %s", rds_entry->d_name);
             size_t len_dirname = strlen(rds_entry->d_name);
             // to ze si naalokujeme pointer, ktery ma 8 Bytes, tak to neznamena, ze muzeme udelat p[0], protoze ten pointer jeste NIKAM neukazuje, a proto to vyhodi segmentation fault, je to jenom 8 Bytes pointeru, ktery ZATIM NIKAM NEUKAZUJE! proto se nejdrive musi naalokovat
@@ -480,6 +511,15 @@ static void recursive_dir_browsing(char *path) {
 
     struct Node_Linked_List *new_node;
     new_node = create_assign_next_node(&root_node);
+
+    struct Node_Linked_List *pointer_to_pass = new_node;
+    while (1) {
+        struct Node_Linked_List *continuous_node;
+        continuous_node = create_assign_next_node(&pointer_to_pass);
+        continuous_node = create_assign_next_node(&pointer_to_pass);
+        pointer_to_pass = continuous_node;
+    }
+   
 
     printf("\n\n vypis: %d", root_node->no_states);
     for (int i = 0; i < root_node->no_states; i++) {
