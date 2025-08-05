@@ -346,15 +346,16 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
             strcpy(partial_path, (*old_node)->dir_names[i]);
             // ted tam mame jmeno te slozky
 
-            size_t len = strlen( (*old_node)->path) + strlen(partial_path) + 1; // pro /
-            path = (char *)malloc(strlen((*old_node)->path) + strlen(partial_path) + 1); // +1 pro / // nemusim resit \0, snprintf odstrani prvni \0, prida hned za nim dalsi string a na konec da \0 (necha ten druhy \0)
+            size_t len = strlen( (*old_node)->path) + strlen(partial_path) + 1 + 1; // pro / // pro \0 zapise se n-1 char ve snprintf, vraci se pocet Bytes, ktere By se zapsalo, kdyby n bylo dostatecne velike, takze n muze byt malinke a return value muze byt mnohem vetsi
+            path = (char *)malloc(strlen((*old_node)->path) + strlen(partial_path) + 1 + 1); // +1 pro / // nemusim resit \0, snprintf odstrani prvni \0, prida hned za nim dalsi string a na konec da \0 (necha ten druhy \0), ALE MUSIM SI PRO NEJ VYPOCITAT DOSTATECNE VELKE MISTO
             snprintf(path, len, "%s/%s", (*old_node)->path, partial_path); // path noveho node // +1 pro \0 (including the terminating null bytes)
             
-            printf("\n\nTO, CO SE VYMAZE: %s, %d", (*old_node)->dir_names[i], (*old_node)->no_states);
+            printf("\n\nTO, CO SE VYMAZE: %s, %d, path: %s", (*old_node)->dir_names[i], (*old_node)->no_states, path);
             (*old_node)->no_states--;
 
             (*old_node)->dir_names = delete_dir_names_i((*old_node)->dir_names, (*old_node)->no_states, i);
             printf("\n%d, %s, %s, %s\n\n", (*old_node)->no_states, path, (*old_node)->path, partial_path);
+            fflush(stdout);
             // memset((*old_node)->dir_names[i], 0, strlen((*old_node)->dir_names[i])); // jakoby "free()"
 
             break; // tento loop staci pustit jenom jednou a mame vysledky
@@ -376,7 +377,14 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
 
 
     // ted si chci vzit vsechny mozne informace o root_node (te slozky, kterou jsme dostali), tyto informace nam budou uzitecne k tomu, abychom vedeli, do jake slozky mame vniknou, co tam poslat a zase nejaky zpusob nazpatek
+    printf("\n\npath: %s", path);
+    fflush(stdout);
     DIR *node_dir = opendir(path);
+
+    if (node_dir == NULL) {
+        perror("\nopendir() selhal");
+        fflush(stdout);
+    }
     struct dirent *node_entry;
 
     int number_of_elements = 1;
@@ -399,9 +407,14 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
         }
     }
 
-    new_node->path = (char*)malloc(strlen(path));
-    printf("\nnew_node->path %s", path);
-    memcpy((void*)new_node->path, (void *)path, strlen(path));
+    // kdybychom pouzili memcpy, tak by se stalo nasledovne:
+    // memcpy((void*)new_node->path, (void *)path, strlen(path));
+    // zkopiruje a pastne se presne tolik Bytes, kolik ma JENOM ten string path BEZ \0, takze se vrati pocet o JEDNA mensi nez ma byt (bez \0), takze potom az bychom neco chteli vyprintovat pomoci printf, tak printf %s cte do te doby NEZ NENARAZI NA \0, a protoze bychom nezkopirovali presny pocet Bytes, tak bychom dostali garbage values
+    // strcpy kopiruje I S \0, tam se zastavuje
+    new_node->path = (char*)malloc(strlen(path) + 1); // jinak buffer overflow!!
+    strcpy((void*)new_node->path, (void *)path);
+    printf("\nnew_node->path %s, strlen new_node->path: %d", new_node->path, strlen(new_node->path)); // 36 -> 42
+    fflush(stdout);
 
     // new_node->no_states = (*new_node).no_states
 
@@ -432,7 +445,9 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
 
     // printf("\n\nnew_node->previous_node: %p", (void *)(new_node->previous_node));
     // printf("\nprevious_node: %p", (void *)(*old_node));
-
+    printf("\nnew_node->path %s", new_node->path);
+    fflush(stdout);
+    closedir(node_dir);
     return new_node; // new_node
 }
 
@@ -451,8 +466,9 @@ void fill_root_node(struct Node_Linked_List **root_node, char *path) {
     memset((void *)(*root_node), 0, sizeof(struct Node_Linked_List));
     // memset((void *)(*root_node), 0, sizeof(struct Node_Linked_List *)); // vynulovani, protoze next_node asi neudelame automaticky
 
-    (*root_node)->path = (char *)malloc(strlen(path));
-    memcpy((void *)(*root_node)->path, (void *)path, strlen(path));
+    (*root_node)->path = (char *)malloc(strlen(path) + 1); // STRLEN VRACI VELIKOST BEZ \0!!!!
+    strcpy((void *)(*root_node)->path, (void *)path);
+    // memcpy((void *)(*root_node)->path, (void *)path, strlen(path));
 
     (*root_node)->no_states = 0;
 
@@ -466,10 +482,11 @@ void fill_root_node(struct Node_Linked_List **root_node, char *path) {
         }
         else if (rds_entry->d_type == DT_DIR && strcmp(rds_entry->d_name, ".") != 0 && strcmp(rds_entry->d_name, "..") != 0) {
             // printf("\nentry: %s", rds_entry->d_name);
-            size_t len_dirname = strlen(rds_entry->d_name);
+            size_t len_dirname = strlen(rds_entry->d_name) + 1; // jinak buffer overflow!!!
             // to ze si naalokujeme pointer, ktery ma 8 Bytes, tak to neznamena, ze muzeme udelat p[0], protoze ten pointer jeste NIKAM neukazuje, a proto to vyhodi segmentation fault, je to jenom 8 Bytes pointeru, ktery ZATIM NIKAM NEUKAZUJE! proto se nejdrive musi naalokovat
             (*root_node)->dir_names[arr_i] = (char *)malloc(len_dirname); // vraci pointer na void *, proto to na leve strane muze byt COKOLIV => int **, int ***, char ****, char *
             strcpy((*root_node)->dir_names[arr_i++], rds_entry->d_name); // i s \0
+            printf("\n\n root_entry_d_name: %s", rds_entry->d_name);
             // memcpy((void *)(*root_node)->dir_names[num-1], (void *)rds_entry->d_name, len_dirname); // realloc() premeni velikost toho bufferu a necha tam ty stejne data, toto zkopiruje jen pouha data bez \0!
             // printf("\n\n root: %s\n", rds_entry->d_name);
             // fflush(stdout);
@@ -488,7 +505,10 @@ void fill_root_node(struct Node_Linked_List **root_node, char *path) {
 
     // printf("%d %d", arr_i, num);
     (*root_node)->previous_node = NULL;
+    closedir(root_dir_stream);
 }
+
+
 
 
 static void recursive_dir_browsing(char *path) {
@@ -515,7 +535,6 @@ static void recursive_dir_browsing(char *path) {
     struct Node_Linked_List *pointer_to_pass = new_node;
     while (1) {
         struct Node_Linked_List *continuous_node;
-        continuous_node = create_assign_next_node(&pointer_to_pass);
         continuous_node = create_assign_next_node(&pointer_to_pass);
         pointer_to_pass = continuous_node;
     }
