@@ -341,7 +341,7 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
 
     if ( (*old_node)->no_states >= 1) {
         for (int i = 0; i < (*old_node)->no_states; i++) { // musim o jeden pytlik dovnitr a mam pointer na strukturu, pokud bych chtel strukturu => (**old_node).no_states (protoze chci z pointeru NA STRUKTURU STRUKTURU => **)
-            char *partial_path = (char *)malloc(strlen((*old_node)->dir_names[i])); // uz je s \0, takze uz nemusim s + 1
+            char *partial_path = (char *)malloc(strlen((*old_node)->dir_names[i]) + 1); // uz je s \0, takze uz nemusim s + 1
             // memcpy((void *)partial_path, (void *)(*old_node)->dir_names[i], strlen( (**old_node).dir_names[i]));
             strcpy(partial_path, (*old_node)->dir_names[i]);
             // ted tam mame jmeno te slozky
@@ -374,7 +374,8 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
     
 
     // printf("\n\npath: %s\n\n", path);
-
+    // NULL pointer je hodnota 0, na kterou je pointer, je to cislo 0, ale je to interpretovano jako pointer na ADRESU 0
+    // zatimco \0 je ASCII hodnota 0x0 => 0, tak je to interpretovano jako normalni datovy typ int 0, NE jako adresa
 
     // ted si chci vzit vsechny mozne informace o root_node (te slozky, kterou jsme dostali), tyto informace nam budou uzitecne k tomu, abychom vedeli, do jake slozky mame vniknou, co tam poslat a zase nejaky zpusob nazpatek
     printf("\n\npath: %s", path);
@@ -397,6 +398,7 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
         }
         else if (node_entry->d_type == DT_DIR && strcmp(node_entry->d_name, ".") != 0 && strcmp(node_entry->d_name, "..") != 0) {
             size_t len_dirname = strlen(node_entry->d_name);
+            new_node->dir_names[arr_i] = (char *)malloc(len_dirname + 1); // bez + 1 heap overflow
             // memcpy((void *)new_node->dir_names[i], (void *)node_entry->d_name, len_dirname);
             strcpy(new_node->dir_names[arr_i++], node_entry->d_name);
             // printf("\nTO, CO ZUSTANE: %s", node_entry->d_name);
@@ -453,6 +455,9 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
 
 // u pouhych char *, jednotlivych pismen se nemusi davat \0 (NULL terminator), protoze to neni C-string
 // kdyz je neinicializovana promenna v C, tak C pro to nema zadne pravidla, ale kompilatory si udelaji sve vlastni prave pro tyto promenne (nastavi jim nejake hodnoty - zalezi to na kompilatoru)
+
+// .a je staticka knihovna - musi se linknout pri kompilaci
+// .so je dynamicka knihovna / linkuje se dynamicky
 
 void fill_root_node(struct Node_Linked_List **root_node, char *path) {
     num = 1;
