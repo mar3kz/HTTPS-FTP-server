@@ -420,12 +420,21 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
 
     // new_node->no_states = (*new_node).no_states
 
-    new_node->previous_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *)); // alokuje se nove pole, proto nebude mit stejnou memory adresu jako root_node
-    memcpy((void *)new_node->previous_node, (void *)(*old_node), sizeof(struct Node_Linked_List *));
+    // kdyz mame pointer na struct Node_Linked_List *, tak bud muzeme udelat manualni prirazeni jako ptr->ptr = memory_address, nebo pomoci kopirovani memory adresy do toho pointer, kdyz se udela ptr->ptr=memory_address, tak se udela uplne to stejne, TAKE SE ZKOPIRUJE ta memory adresa, pokud se udela free() jednoho z tich dvou pointeru, tak ten druhy ztrati pristup k te memory adrese a pokud se pokusime udelat dalsi free(), tak to vypise error
 
-    (*old_node)->next_node = (struct Node_Linked_List *)malloc(sizeof(struct Node_Linked_List *)); // vzdy do zavorek, protoze -> ma vyssi prioritu nez *, takze se nejdrive vezme next_node a az potom ten dereference
-    memcpy((void *)(*old_node)->next_node, (void *)new_node, sizeof(struct Node_Linked_List *));
-
+    // toto by udelalo memory leak, protoze uz je naalokovano 8 Bytes pro pointer a ja bych prepsal tu memory adresu na jinou, protoze se nam vrati x Bytes na jine memory adrese ma heapu, neni jak ziskat puvodnich 8 Bytes => memory leak
+    // new_node->previous_node = malloc(sizeof(struct Node_Linked_List )); // alokuje se nove pole, proto nebude mit stejnou memory adresu jako root_node
+    // new_node->previous_node (hodnota pointeru), &new_node->previous_node (CILOVA ADRESA POINTERU PREVIOUS_NODE) a chceme tam ulozit memory adresu pointeru na struct, protoze (*old_node)
+    // protoze (*old_node) je pointer na zacatek struktury, tak by se zkopirovalo size(struct Node_Linked_List *) dat ze struct, ale my chceme zkopirovat memory adresu toho pointeru, abychom vedeli
+    // protoze memcpy ocekeva pointer na OBJEKT, ze ktereho bude brat data, tak kdyby byl tam dan pointer jenom na struct, tak by si memcpy myslelo, ze to je pointer na struct, takze by se vzalo sizeof(struct Node_Linked_List *) ze struct
+    memcpy((void *)&new_node->previous_node, (void *)(old_node), sizeof(struct Node_Linked_List *));
+    // alternativa: new_node->previous_node = (*old_node);
+    // new_node->previous_node = (*old_node);
+    // (*old_node)->next_node = malloc(sizeof(struct Node_Linked_List )); // vzdy do zavorek, protoze -> ma vyssi prioritu nez *, takze se nejdrive vezme next_node a az potom ten dereference
+    // &(*old_node)->next_node protoze old_node je pointer na pointer na struct, ale my potrebujeme memory adresu samotneho clena
+    memcpy((void *)&(*old_node)->next_node, (void *)&new_node, sizeof(struct Node_Linked_List *));
+    // alternativa: (*old_node)->next_node = new_node;
+    // (*old_node)->next_node = new_node;
 
 
     
