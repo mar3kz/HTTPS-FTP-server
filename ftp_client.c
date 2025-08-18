@@ -187,7 +187,7 @@ static void send_file(char *path) {
         char *file_data = (char *)malloc(offset_length_file + 1);
 
         ssize_t read_rv; // read muze vratit mene Bytes nez chceme
-        for (; (read_rv = read(fd, file_data, offset_length_file)) != offset_length_file;) {
+        for (; (read_rv = (read(fd, file_data, offset_length_file))) != offset_length_file;) {
             if (read_rv == -1) {
                 perror("read() selhal - send_file()");
                 exit(EXIT_FAILURE);
@@ -242,7 +242,7 @@ char **delete_dir_names_i(char **dir_names, int no_states, int i_to_delete) {
     return new_dir_names;
 }
 
-void delete_node(struct Node_Linked_List **node_to_delete, struct Node_Linked_List *node_change_info) {
+void delete_node(struct Node_Linked_List **node_to_delete, int is_root_node, struct Node_Linked_List *node_change_info) {
     // pro pointer node_change_info se udela kopie (udela se nova memory adresa/ulozeni do registru) ta memory adresa, kam ten originalni pointer ukazuje, a pokud zmenime obsah memory pomoci ->, tak se ukaze globalne, ale pokud se to zmeni pomoci =, tak to probehne jenom lokalne
     // pokud bychom chteli zmenit CELY pointer na treba jinou strukturu, tak bychom museli z pointeru udelat pointer na pointer
 
@@ -257,7 +257,9 @@ void delete_node(struct Node_Linked_List **node_to_delete, struct Node_Linked_Li
     free((*node_to_delete)->next_node);
     free((*node_to_delete));
 
-    node_change_info->next_node = NULL;  
+    if (!is_root_node) {
+        node_change_info->next_node = NULL; // automaticka dereference
+    }
 }
 
 struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_node) {
@@ -363,9 +365,12 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
     }
     else {
         // kdyz bude slozka, kde jsou soubory a jedna dalsi slozka, tak se koukne na tu slozku, ten stary node, s touhle slozkou bude mit v dir_names tuto slozku, udela se novy node, kde bude path prave tato slozka, u stareho node se udela -- u no_states, pokud v teto slozce bude dalsi slozka, tak se bude pokracovat, ale pokud ne, tak se musi jit na backtracking, to se musi vratit new_node jako old_node, potom se udela novy node, zkoukne se tato podminka a pokud bude else (budeme tady), tak vime, ze uz se ty soubory poslali a MUSIME vratit previous_node jako new_node
-
-        if ((*old_node)->previous_node == root_node) {
+        // root_node
+        if ((*old_node)->previous_node == NULL) {
             // jestli root_node ma 0 no_states, tak uz je konec a dostali jsme se uplne na vrchol
+            printf("\nbyly poslany vsechny slozky\n");
+            delete_node(old_node, 1, NULL);
+            exit(EXIT_SUCCESS);
         }
         else {
             return (*old_node)->previous_node;
@@ -443,6 +448,7 @@ struct Node_Linked_List *create_assign_next_node(struct Node_Linked_List **old_n
         // nejdrive se koukneme, jestli je v node nejaka slozka, pokud ne, tak to znamena, ze muze zacit proces backtracking, na tuto podminku se ptame az na konci teto funkce, protoze budeme chtit free() cely node, aby nas to nejak netrapilo/nezmatlo a kdybychom chteli udelat free() toho node, kdyz jsou pointery uninitialized, tak by to bylo undefined behaviour (UB), zatimco JDE BEZ PROBLEMU free() NULL pointer, proto se ta no ptame az na konci
         // (*old_node)->next_node = NULL; // toto tady nemusi byt, protoze to delame v delete_node()
         fprintf(stdin, "\nvse probehlo OK, ftp_client poslal vse soubory v jednom node (jedne slozce/adresari)\n");
+        delete_node(&new_node, 0, (*old_node));
         return (*old_node);
         // delete_node(&new_node, (*old_node));
 
@@ -615,10 +621,15 @@ static int ftp_dtp() {
     
     char *user_data = (char *)malloc(MAX_LEN);
     char *user_choice_dir_file = (char *)malloc(sizeof(char));
-    setvbuf(stdout, NULL, _IONBF, 0);
+    // setvbuf(stdout, NULL, _IONBF, 0); // nebude bufferovane
+
+    int write_choice = 0;
+
     for (;;) { // setup, advance nic zvlastniho nedelaji
-        printf("\nchcete poslat soubor (f) nebo adresar (d): \n");
-        fflush(stdout);
+        if (!write_choice) {
+            printf("\nchcete poslat soubor (f) nebo adresar (d): \n");
+            fflush(stdout);
+        }
         
         struct timeval timeout = { .tv_sec = 2, .tv_usec = 0}; // select zase muze zasahnout do teto struktury
 
@@ -651,7 +662,50 @@ static int ftp_dtp() {
         //     fflush(stdout);
         // }
         // printf("\na\n");
+        
+        write_choice = 1;
     }
+}
+
+void control_connection(int ftp_control_socket, struct sockaddr **server_control_info) {
+
+    // client nemusi mit setsockopt SO_REUSEADDR, protoze se binduje k nejakemu stanovemu portu, client ma svuj lokalni port, takze se vzdycky zmeni
+
+    // u connect to musi byt oboustranne dane zavorkami, protoze == ma vetsi prioritu nez =
+    int ftp_control_com;
+    // (**) se z toho stane struktura, (**) je dereference jako (*(*ptr))
+    // blocking, protoze client zacina control connection
+    if ( (ftp_control_com = connect(ftp_control_socket, server_control_info, sizeof((**server_control_info)) )) == -1 ) {
+        perror("connect() selhal - ftp_control");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("+-----------------------------------------+");
+    printf("| this version of FTP implements:         |");
+    printf("| DATA REPRESENTATION: ASCII NONPRINT (N) |");
+    printf("| TRANSMISSION MODE  : STREAM             |");
+    printf("| DATA STRUCTURE     : FILE-STRUCTURE     |");
+    printf("| COMMANDS: USER, QUIT, PORT, TYPE, MODE  |");
+    printf("| RETR, STOR, NOOP                        |");
+    printf("+-----------------------------------------+");
+    // tento socket bude blocking, protoze budeme vzdy cekat na odpoved od serveru
+    // nedela nic specialniho; pokud bude false, tak se to ukonci; nedela nic specialniho
+    for (;;) {
+
+    }
+}
+
+void data_connection(int ftp_data_socket, struct sockaddr **server_data_info) {
+    // proc se to typecastuje na struct sockaddr *, protoze sockaddr_in a sockaddr_in6 a sockaddr maji stejne rozlozeni pole family, takze se podle toho, jaka struktura se ma interne pouzivat, vsechno jsou to jenom data
+    int ftp_data_com;
+    if ( (ftp_data_com = connect(ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(server_data_info))) == -1) {
+        perror("connect() selhal - ftp_data");
+        exit(EXIT_FAILURE);
+    }
+
+
+    printf("ftp_control_com, ftp_data_com %d, %d", ftp_control_com, ftp_data_com);
+    printf("\n\n\n\nvse probehlo ok, jsem pripojeny \n\n\n\n");
 }
 
 int main() {
@@ -669,6 +723,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
+
     struct sockaddr_in server_data_info;
     memset(&server_data_info, 0, sizeof(struct sockaddr_in));
 
@@ -680,6 +735,7 @@ int main() {
         perror("inet_pton selhal() - ftp_data");
         exit(EXIT_FAILURE);
     }
+
 
     // pokazde kdyz se client pripoji, tak dostane novy nahodny port od OS, proto musi server udelat setsockopt SO_REUSABLE, protoze server nemenni port a binduje
     // ten stejny
@@ -700,23 +756,41 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    // client nemusi mit setsockopt SO_REUSEADDR, protoze se binduje k nejakemu stanovemu portu, client ma svuj lokalni port, takze se vzdycky zmeni
+    control_connection(ftp_control_socket, (struct sockaddr **)&server_control_info);
+    
+    pthread_t thread_control, thread_data; // ID of thread
 
-    // u connect to musi byt oboustranne dane zavorkami, protoze == ma vetsi prioritu nez =
-    int ftp_control_com;
-    if ( (ftp_control_com = connect(ftp_control_socket, (struct sockaddr *)&server_control_info, sizeof(server_control_info) )) == -1 ) {
-        perror("connect() selhal - ftp_control");
+    struct Control_Args {
+        int ftp_c_socket;
+        struct sockaddr **server_c_info;
+    };
+
+    struct Control_Args control_args = { .ftp_c_socket = ftp_control_socket, .server_c_info = &server_control_info };
+
+    struct Data_Args {
+        int ftp_d_socket;
+        struct sockaddr **server_d_info;
+    };
+
+    struct Data_Args data_args = { .ftp_d_socket = ftp_data_socket, .server_d_info = &server_data_info};
+
+    void (* f_control_connection)(int, struct sockaddr **) = control_connection;
+    void (* f_data_connection)(int, struct sockaddr **) = data_connection;
+
+    if ( pthread_create(thread_control, NULL, f_control_connection, (void *)&control_args)); { // NULL je atribut pro atribut strukturu, ktera specifikuje urcite atributy nove vytvoreneho thread, jako scheduling policy, inherit scheduler
+        perror("pthread_create() selhal - thread_control");
         exit(EXIT_FAILURE);
     }
 
-    // proc se to typecastuje na struct sockaddr *, protoze sockaddr_in a sockaddr_in6 a sockaddr maji stejne rozlozeni pole family, takze se podle toho, jaka struktura se ma interne pouzivat, vsechno jsou to jenom data
-    int ftp_data_com;
-    if ( (ftp_data_com = connect(ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(server_data_info))) == -1) {
-        perror("connect() selhal - ftp_data");
-        exit(EXIT_FAILURE);
+    // pthread vraci 0 pri success
+    if ( pthread_create(thread_data, NULL, f_data_connection, (void *)&data_args)) {
+
     }
-    printf("ftp_control_com, ftp_data_com %d, %d", ftp_control_com, ftp_data_com);
-    printf("\n\n\n\nvse probehlo ok, jsem pripojeny \n\n\n\n");
+
+
+    data_connection(ftp_data_socket, (struct sockaddr **)&server_data_info);
+
+
 
     ftp_dtp();
 

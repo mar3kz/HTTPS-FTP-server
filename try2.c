@@ -50,7 +50,7 @@ struct Try2 {
 };
 
 void change_value(struct Try2 *p) {
-    // p->a = 10; // zmeni se GLOBALNE!!
+    // p->a = 10; // zmeni se GLOBALNE!! automaticke dereferencovani
     struct Try2 x = { .a = 20 }; // zmeni se LOKALNE!!
     p = &x;
 }
