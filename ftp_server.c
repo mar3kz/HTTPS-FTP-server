@@ -99,6 +99,19 @@ typedef enum Account_enum {
 } Account_Spec;
 Account_Spec Account_spec = UNSET;
 
+typedef enum Ftp_Data_Representation {
+    ASCII = 0,
+    IMAGE = 1,
+} Ftp_Data_Repre;
+Ftp_Data_Repre ftp_data_repre = ASCII;
+
+typedef struct Ftp_User_Info {
+    char *username;
+    char *password;
+    
+    Ftp_Data_Repre data_represantation;
+}
+
 // struct Handling_response_struct {
     // int httpcomsocket;
     // // pthread_t threadID; // zbytecne, protoze samo vlakno muze udelat pthread_self()
@@ -540,6 +553,19 @@ void signal_handler() {
 
 
 // }
+
+void *control_connection(void *temp_p) {
+    struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)temp_p;
+
+    int ftp_control_com = ftp_sockets_p->ftp_control_com; // nebude zmateni, kompilator vi, ze nalevo je promenna a napravo je clen struktury, proto si to nepoplete
+    // kdyz nevime delku zpravi, tak bud musime poslat pred samotnou zpravou, kolik Bytes to bude chtit nebo udelame non-blocking socket => libevent
+}
+
+void *data_connection(void *temp_p) {
+    struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)temp_p;
+
+    int ftp_data_com = ftp_sockets_p->ftp_data_com; // nebude zmateni, kompilator vi, ze nalevo je promenna a napravo je clen struktury, proto si to nepoplete
+}
 
 void *select_ftp(void *ftp_sockets) {
     // accept ma uz zabudovany pocet file descriptoru, ktere obslouzi, a to je 1024, je to pole typu long, kde kazdy bit je jeden file descriptor => bit. 256 => file descriptor 256

@@ -12,6 +12,7 @@
 #include <dirent.h> // pro cteni slozek
 #include <sys/stat.h> // stat, lstat, fstat
 #include <pthread.h>
+#include <time.h> // clock() - vraci tics od zacatku programu
 
 #define CONTROL_PORT 2100
 #define DATA_PORT 2000
@@ -90,6 +91,8 @@ Commented Mar 28, 2019 at 7:40
 
 https://stackoverflow.com/questions/69204707/why-cant-i-use-n-scanset
 */
+
+// pokud chceme zjistit, kolik casu ubehlo od nejake akce v C, tak musime implementovat funkci clock(), ktera vraci umelou jednotku tics a pokud udelame interval mezi dvema eventy zmerime tyto jednotky a potom je vydelime konstantou, ktera nam urcuje pocet techto umelych jednotek za sekundu, tak zjistime celkovy pocet sekund
 
 struct Node_Linked_List {
     char *path;
@@ -688,6 +691,31 @@ void zero_memory(char *ptr_memory_address) {
     memset(ptr_memory_address, sizeof(char) * 100, 0);
 }
 
+void send_ftp_code(char *message, int ftp_control_com) {
+    ssize_t bytes_sent;
+    size_t bytes_total;
+
+    if (strlen(message) == 0) {
+        fprintf(stderr, "nulova zprava - send_ftp_code");
+        exit(EXIT_FAILURE);
+    }
+
+    int len_message = strlen(message) + 1; // protoze strlen() vraci delku bez \0
+
+    // https://stackoverflow.com/questions/3081952/with-c-tcp-sockets-can-send-return-zero
+    // strlen("") => 0
+    // enums zacinaji na 0 a potom + 1 dalsim enumem
+    // https://www.quora.com/What-is-the-best-way-to-read-from-a-socket-if-we-dont-know-how-many-bytes-are-to-be-received
+    while ( (bytes_sent = send(ftp_control_com, message, len_message, 0)) != len_message) {
+        if ( bytes_sent == -1) {
+            perror("send() selhal - send_ftp_code");
+            exit(EXIT_FAILURE);
+        }
+        // podle jednoho cloveka na stackoverflow to muze vratit 0, kdyz TCP stack receive buffer je plny, tak se muze cekat/odeslat 0 Bytes
+    }
+
+}
+
 void *control_connection(void *temp_p) {
     // client nemusi mit setsockopt SO_REUSEADDR, protoze se binduje k nejakemu stanovemu portu, client ma svuj lokalni port, takze se vzdycky zmeni
     struct Control_Args *control_arg_struct = (struct Control_Args *)temp_p;
@@ -759,31 +787,44 @@ void *control_connection(void *temp_p) {
             enum FTP_Code_Login recv_code = recv_ftp_info(ftp_control_com);
             switch (recv_code) {
                 case FSC:
-                    printf("535 - Failed security check");
+                    send_ftp_code("535 - Failed security check", ftp_control_com);
                     break;
                 case INU_O_PS:
-                    printf("430 - Invalid username or password");
+                    send_ftp_code("430 - Invalid username or password", ftp_control_com);
                     break;
                 case ULOG_IN:
-                    printf("230 - User logged in, proceed");
-                    printf("    220 - Service ready for new user");
+                    send_ftp_code("230 - User logged in, proceed", ftp_control_com);
+                    send_ftp_code("220 -    Service ready for new user", ftp_control_com);
                     new_user_connection = 1;
                     continue; // nemusi byt break, protoze se rovnou skoci na dalsi iteraci toho for loopu (udelala by se i kdyztak inkrementace u toho for loopu)
                 default:
-                    printf("501 - Syntax error in parameter or arguments");
+                    send_ftp_code("501 - Syntax error in parameter or arguments", ftp_control_com);
             }
-            printf("425 - Can't open data connection");
-
-
-
+            printf("425 - Can't open data connection", ftp_control_com);
         }
-       
-
         
+        scanf(" %99[^\n]", user_request);
+        enum Ftp_Commands ftp_commands = get_ftp_command(user_request);
 
+        switch(ftp_commands) {
+            case QUIT:
 
-
-
+                break;
+            case PORT:
+                break;
+            case RETR:
+                break;
+            case STOR:
+                break;
+            case NOOP:
+                send_ftp_code("200 - The requested action has been successfully completed", ftp_control_com);
+                break;
+            case TYPE:
+                break;
+            default:
+                send_ftp_code("502 - Command not implemented", ftp_control_com);
+                break;
+        }
     }
 }
 
@@ -806,6 +847,11 @@ void * data_connection(void *temp_p) {
 }
 
 int main() {
+    // clock_t => __kernel_long_t => long
+    clock_t start;
+    start = clock(); // counting tics from the start of this process
+
+
     struct sockaddr_in server_control_info;
     memset(&server_control_info, 0, sizeof(struct sockaddr_in)); // ujisteni, ze struiktura je opravdu prazdna, bez garbage values, v struct adrrinfo bych diky 
     //tomu nastavit protokol TCP!
