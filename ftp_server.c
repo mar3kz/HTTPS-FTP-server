@@ -20,6 +20,7 @@
 #include <openssl/err.h> // funkce na errory
 #include <pthread.h>
 #include <event2/event.h> // libevent je knihovna, ktera slouzi k tomu, ze kazdy file descriptor/signal apod. kdyz se na nem stane neco noveho, tak nam to da vedet => multisynchronnous
+#include <event2/buffervent.h>
 #include <mqueue.h> // pro komunikaci mezi procesy/threads
 // event2, protoze to je novejsi verze, kdybych tam dal jenom event, tak
 // #include <event.h>
@@ -151,11 +152,18 @@ SSL_CTX *ctx = NULL; // SSL_CTX je datova struktura obsahujici veskere informace
 // ale kod by byl hodne zavisly na verzi openssl
 // globalni promenna nesmi byt dynamicky alokovana
 
+enum Ftp_type {
+    CONTROL = 0,
+    DATA = 1,
+},
+
 struct Ftp_Sockets {
     int ftp_control_socket;
     int ftp_control_com;
     int ftp_data_socket;
     int ftp_data_com;
+
+    enum Ftp_type control_or_data;
 };
 struct Ftp_Sockets ftp_sockets;
 
@@ -554,17 +562,76 @@ void signal_handler() {
 
 // }
 
+void event_callback(evutil_socket_t fd, short what, void *arg) {
+    // (expression) ? express_true : express_false
+    printf("\nsocket: %d -> event: %s", fd, (what&EV_READ) ? "read" : "", (what&EV_WRITE) ? "write" : "");
+}
+
+void buf_event_write_callback(struct bufferevent *buf_event, short events, void *ptr_arg) {
+    // control/data connection
+    // based on that either send file or send an ftp code
+    struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)ptr_arg;
+
+
+    switch(ftp_socket_p->control_or_data) {
+        case CONTROL:
+            break;
+        case DATA:
+            break;
+        default:
+            fprintf(stderr, "ftp_sockets_p->control_or_data - buf_event_write_callback selhal");
+            exit(EXIT_FAILURE);
+            break;
+    }
+}
+
+void buf_event_read_callback(struct bufferevent *buf_event, short events, void *ptr_arg) {
+    // the big switch statement
+
+
+}
+
 void *control_connection(void *temp_p) {
     struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)temp_p;
 
     int ftp_control_com = ftp_sockets_p->ftp_control_com; // nebude zmateni, kompilator vi, ze nalevo je promenna a napravo je clen struktury, proto si to nepoplete
     // kdyz nevime delku zpravi, tak bud musime poslat pred samotnou zpravou, kolik Bytes to bude chtit nebo udelame non-blocking socket => libevent
+    ftp_sockets_p->control_or_data = CONTROL;
+
+    struct event_base *evbase = event_base_new(); // default settings
+
+    if (evbase == NULL) {
+        perror("event_base_new() selhal - data_connection");
+        exit(EXIT_FAILURE);
+    }
+
+    struct bufferevent *buf_event = bufferevent_socket_new(evbase, ftp_control_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS); // thread safe
+
+    bufferevent_setcb(buf_event, buf_event_read_callback, buf_event_write_callback, NULL, ftp_sockets_p); // prvni NULL je pro eventcb, coz by melo byt ale stejny cb jako u event_base, 2. NULL je pointer na argumenty ke vsem temto funkcim
+
+    // edge-trigger event a level event trigger
+    // toto se pouziva i digitalnich obvodech, ale v trochu jinem svetle, ale predstavme si 0 a 1 a stav mezi nimi, zkracene to znamena kdyz mame nejake event (hodnotu 0 nebo 1), tak u level event trigger dostaneme notifikaci s tim, ze event byl spusten a tato notifikace nam zustane porad nekde ulozena (u epoll revents nebo u libevent), ale porad tam bude napsane, ze je mozno neco udelat, ale kdyz to bude edge trigger, tak dostaneme jenom tu notifikaci o tom, ze neco je pripravene a tuto notifikaci dostaneme jenom jednou do te doby nez treba ten socket neprecteme z neho vsechny data a potom az muzeme dostat dalsi upozorneni od onoho socketu, takovy nonblocking upozorneni
+
+    struct event *event_read = event_new(evbase, ftp_control_com, EV_READ | EV_WRITE, event_callback, NULL); // initialized event
+    event_add(event_read, NULL); // event pending, to druhe je pro timeval struct pro timeval struct, proto, aby se v event loopu cekalo na ten timeout a potom se reklo, jestli se ten event opravdu stal nebo ne
+
+    event_base_loop(event_base, EVLOOP_NONLOCK | EVLOOP_NO_EXIT_ON_EMPTY); // bude cekat nez se nejake eventy udelaji ready a pokud zadne nebudou ready, tak se z tohoto loopu nevyskoci
+
+
+
+
+
 }
 
 void *data_connection(void *temp_p) {
     struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)temp_p;
 
     int ftp_data_com = ftp_sockets_p->ftp_data_com; // nebude zmateni, kompilator vi, ze nalevo je promenna a napravo je clen struktury, proto si to nepoplete
+
+
+
+
+
 }
 
 void *select_ftp(void *ftp_sockets) {
@@ -587,6 +654,9 @@ void *select_ftp(void *ftp_sockets) {
     FD_SET(ftp_sockets_p->ftp_control_socket, &readbitmask);
     FD_SET(ftp_sockets_p->ftp_data_socket, &readbitmask);
 
+    void *(*f_control_con)(void *) = &control_connection;
+    void *(*f_data_con)(void *) = &data_connection;
+
     // read, write, exception
     // kousek na tom socketu prijme, kousek na tom socketu zapise, moc se nedeje, je to exception treba out of band data u TCP
     int nfds = ftp_sockets_p->ftp_data_socket > ftp_sockets_p->ftp_control_socket ? ftp_sockets_p->ftp_data_socket : ftp_sockets_p->ftp_control_socket;
@@ -600,10 +670,20 @@ void *select_ftp(void *ftp_sockets) {
     if (rv == 2) {
         printf("\n\n\nANO, JE TO VSE OK\n\n\n\n\n");
         fflush(stdout);
+
+        ftp_sockets_p->ftp_data_com = -1;
+
         ftp_sockets_p->ftp_control_com = accept(ftp_sockets_p->ftp_control_socket, NULL, NULL);
-        ftp_sockets_p->ftp_data_com = accept(ftp_sockets_p->ftp_data_socket, NULL, NULL);
-        printf(":%d :%d", ftp_sockets_p->ftp_control_com, ftp_sockets_p->ftp_data_com);
-        fflush(stdout);
+        pthread_t thread_control;
+
+        if ( (thread_control = (pthread_create(thread_control, NULL, f_control_con, ftp_sockets))) !=  0) {
+            perror("pthread_create() selhal - select_ftp");
+            exit(EXIT_FAILURE);
+        }
+
+        // ftp_sockets_p->ftp_data_com = accept(ftp_sockets_p->ftp_data_socket, NULL, NULL);
+        // printf(":%d :%d", ftp_sockets_p->ftp_control_com, ftp_sockets_p->ftp_data_com);
+        // fflush(stdout);
         return NULL;
     }
     else {
