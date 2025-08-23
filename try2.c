@@ -143,6 +143,13 @@ int main()
     printf("\n%c", 'ž');
     printf("\n%d", 'ž'); // protoze to jsou 2 Bytes, tak to udela velke cislo, protoze ty bits, ktere jsou responsible pro to cislo, tak se vypisou decimalne hned za sebou -> velke cislo
 
+    if (13 == 0xD) {
+        printf("yes");
+    }
+    else {
+        printf("no");
+    }
+
 
     // int a = 10;
     // int *p = &a;

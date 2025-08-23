@@ -629,6 +629,12 @@ static char *path_to_open(char *path) {
     return path_to_file;
 }
 
+
+void receive_codes_data(int com_socket, enum ) {
+
+}
+
+
 static int ftp_dtp() {
     // ~/Documets/FTP_SERVER
     // => /home/marek
@@ -716,6 +722,8 @@ void send_ftp_code(char *message, int ftp_control_com) {
 
 }
 
+// protoze FTP server (originalni implementaci podporuje jenom ascii soubory), takze nemuzeme posilat treba veci v cestine, protoze to je jina encoding sada, tak prakticky jenom zalezi, jak se interne ulozi ty chars, protoze, pokud v programu to ulozime jako unsigned char => 1 Bytes, tak kdybychom chteli ulozit 2 Bytes znak do 1 Bytes znaku, tak by to nefungovalo
+// tento server bude podporovat jenom ASCII (potom kdyztak utf-8)
 void *control_connection(void *temp_p) {
     // client nemusi mit setsockopt SO_REUSEADDR, protoze se binduje k nejakemu stanovemu portu, client ma svuj lokalni port, takze se vzdycky zmeni
     struct Control_Args *control_arg_struct = (struct Control_Args *)temp_p;
@@ -737,14 +745,14 @@ void *control_connection(void *temp_p) {
 
 
     printf("+------------------------------------------------+");
-    printf("| USER string = log in - necessary 1st command!  |");
-    printf("| PASS string = log in - necessary 2nd command!  |");
-    printf("| QUIT        = log out (files will be sent)     |");
-    printf("| PORT        = change default port for data tr. |");
-    printf("| RETR        = retrieve last specified file by  |");
-    printf("| STOR        = send a file to server            |");
-    printf("| NOOP        = server will send OK code & msg   |");
-    printf("| TYPE        = ASCII Non-print/Image (bit data) |");
+    printf("| USER string = log in - necessary 1st command!  |"); // 2
+    printf("| PASS string = log in - necessary 2nd command!  |"); // 2
+    printf("| QUIT        = log out (files will be sent)     |"); // 1
+    printf("| PORT        = change default port for data tr. |"); // 7
+    printf("| RETR        = retrieve last specified file by  |"); // 1
+    printf("| STOR        = send a file to server            |"); // 2
+    printf("| NOOP        = server will send OK code & msg   |"); // 1
+    printf("| TYPE        = ASCII N(on-print)/Image (bits)   |"); // 3
     printf("+------------------------------------------------+");
 
     // transmission mode - stream indikuje EOF jako ukonceni konekce, dalsi soubor musi na dalsi konekci, ale pozor toto muzeme delat, jenom kdyz mame tu socket adresu muzeme reusovat a ze se nema cekat na ten TCP delay
@@ -806,29 +814,11 @@ void *control_connection(void *temp_p) {
         scanf(" %99[^\n]", user_request);
         enum Ftp_Commands ftp_commands = get_ftp_command(user_request);
 
-        switch(ftp_commands) {
-            case QUIT:
-
-                break;
-            case PORT:
-                break;
-            case RETR:
-                break;
-            case STOR:
-                break;
-            case NOOP:
-                send_ftp_code("200 - The requested action has been successfully completed", ftp_control_com);
-                break;
-            case TYPE:
-                break;
-            default:
-                send_ftp_code("502 - Command not implemented", ftp_control_com);
-                break;
-        }
+       
     }
 }
 
-void * data_connection(void *temp_p) {
+void *data_connection(void *temp_p) {
     // proc se to typecastuje na struct sockaddr *, protoze sockaddr_in a sockaddr_in6 a sockaddr maji stejne rozlozeni pole family, takze se podle toho, jaka struktura se ma interne pouzivat, vsechno jsou to jenom data
     struct Data_Args *data_arg_struct = (struct Data_Args *)temp_p; // nejde to rovnou typecastovat, protoze -> ma vetsi prednost nez (type cast)
 

@@ -109,7 +109,9 @@ Ftp_Data_Repre ftp_data_repre = ASCII;
 typedef struct Ftp_User_Info {
     char *username;
     char *password;
+    char *last_path;
     
+    int user_loggedin;
     Ftp_Data_Repre data_represantation;
 }
 
@@ -177,6 +179,8 @@ struct mq_attr attributes = {
 
 int count = 0;
 int css_already = 0;
+struct sockaddr_in server_control_info;
+struct sockaddr_in server_data_info;
 
 void sending_response(char *response, size_t lengthresponse, int comsocket);
 void create_http_response(int comsocket);
@@ -561,6 +565,99 @@ void signal_handler() {
 
 
 // }
+char **execute_commands(char *command, int comsocket) {
+    if (strstr("NOOP", command) != NULL) {
+        send_ftp_code("200 - command okay", comsocket);
+        return NULL; // muzeme vratit NULL, protoze void * pointer ((void *)0) muze nabyvat jakehokoliv typu
+    }
+    else if (strstr("TYPE", command) != NULL) {
+        if (strstr("Image", command) != NULL) {
+            data_representation = IMAGE;
+        }
+        else {
+            data_representation = ASCII_N;
+        }
+    }
+    else if (strstr("QUIT", command) != NULL) {
+        current_user = NULL;
+    }
+    else if (strstr("RETR", command) != NULL) {
+        send_file_bypath();
+    }
+    else if (strstr("STOR", command) != NULL) {
+
+        char *st_space = strstr(" ", command);
+        int i_st_space = (int)(st_space - command);
+
+        char *path = (char *)malloc(strlen(command) - i_st_space + 1);
+        int path_i = 0;
+        for (int i = i_st_space + 1; i < strlen(command) + 1; i++) {
+            path[path_i++] = command[i];
+        }
+        path[path_i] == '\0';
+
+        // get_file from data and save it
+    }
+    else if (strstr("PORT", command) != NULL) {
+        unsigned char *byte_field_address = (unsigned char *)&server_control_info.sin_addr.s_addr; // nova promenna Bytes na memory adresu, kde je ulozeno 4 Bytes
+
+        int st_byte_addr = byte_field_address[0];
+        int nd_byte_addr = byte_field_address[1];
+        int rd_byte_addr = byte_field_address[2];
+        int fth_byte_addr = byte_field_address[3];
+
+        // PORT = server se pripojuje na clienta (data)
+        // PASV = client se pripojuje na server (data)
+
+        unsigned char *byte_field_port = (unsigned char *)&server_control_info.sin_port;
+
+        int st_byte_port = byte_field_port[0];
+        int nd_byte_port = byte_field_port[1];
+
+
+        // send this information
+
+        array_metadata = (char **)malloc(sizeof(char *) * 6);
+
+
+    }
+}
+
+void buf_event_read_callback(struct bufferevent *buf_event, short events, void *ptr_arg) {
+    struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)ptr_arg;
+
+    switch(ftp_socket_p->control_or_data) {
+        case CONTROL:
+            unsigned char *command = (unsigned char *)malloc(256);
+
+            ssize_t bytes_received = 0;
+            size_t bytes_received_total;
+
+            // UDP dela to, ze pokud supplied buffer je mensi nez samotna zprava, tak se naplni buffer a potom se zbytek dat orizne, zatimco TCP toto nedela a data cekaji v TCP stack bufferu
+            // ftp commands jsou ukonceny CRLF jako v Telnetu (\r\n)
+            while ( (bytes_received = recv(ftp_sockets_p->control_com, command + bytes_received_total, 256 - bytes_received_total, 0)) != 0) { // return value 0 = EOF/ 0 bytes prislo
+                if (bytes_received == -1) {
+                    perror("recv() selhal - receive_code_data");
+                    exit(EXIT_FAILURE);
+                }
+                else if (command[bytes_received - 1] == 0xD && command[bytes_received] == 0xA) { // \r\n, takhle se zakoncuji FTP prikazy \r == 13 dec, \n == 10 dec
+                    execute_commands(command);
+                }
+                bytes_received_total += bytes_received;
+            }
+
+            // commands
+            break;
+        case DATA:
+            // sending file
+
+            break;
+        default:
+            fprintf(stderr, "unrecognized Ftp_Type receive_code_data");
+            exit(EXIT_FAILURE);
+            break;
+    }
+}
 
 void event_callback(evutil_socket_t fd, short what, void *arg) {
     // (expression) ? express_true : express_false
@@ -577,18 +674,15 @@ void buf_event_write_callback(struct bufferevent *buf_event, short events, void 
         case CONTROL:
             break;
         case DATA:
+
+
+
             break;
         default:
             fprintf(stderr, "ftp_sockets_p->control_or_data - buf_event_write_callback selhal");
             exit(EXIT_FAILURE);
             break;
     }
-}
-
-void buf_event_read_callback(struct bufferevent *buf_event, short events, void *ptr_arg) {
-    // the big switch statement
-
-
 }
 
 void *control_connection(void *temp_p) {
@@ -754,12 +848,12 @@ int main()
     // SSL_CTX_set_alpn_select_cb(ctx, f_p_cb_alpn, NULL); // POKUD se zajisti, ze client posle ALPN s listem, ktere by mohl pouzit (soucasti SSL/TLS handshake), tak pokud se zachyti tento request na ty protokly (ALPN), tak se
     // nastavi nova callback funkce, kde si muzeme udelat to, co chceme => vypsat nejake informace/spustit dalsi funkce/vybrat si protokol
 
-    struct sockaddr_in server_control_info;
+    
     memset(&server_control_info, 0, sizeof(struct sockaddr_in));
     server_control_info.sin_family = AF_INET;
     server_control_info.sin_port = htons(CONTROL_PORT);
 
-    struct sockaddr_in server_data_info;
+    
     memset(&server_data_info, 0, sizeof(struct sockaddr_in));
     server_data_info.sin_family = AF_INET;
     server_data_info.sin_port = htons(DATA_PORT);
