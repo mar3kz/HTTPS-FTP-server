@@ -565,6 +565,35 @@ void signal_handler() {
 
 
 // }
+
+char **metadata_command(char *command) {
+    // pro PORT = 7 jednotlivych slov, pro PORT to neni potreba, protoze vime, ze tato funkce je primo pro PORT => 6 slov
+    // PORT h1,h2,h3,h4,p1,p2
+
+    char **array = (char **)calloc(6, sizeof(char *));
+    int i_arr = 0;
+
+    for (int i = 0; i < 6; i++) {
+        array[i] = (char *)malloc(4); // max IP adresa muze byt 255 => 3 chars + 1 pro \0
+        memset(array[i], 0, 4); // automaticke NULL terminated strings
+    }
+
+    char *st_space = strstr(" ", command);
+    char *st_separator = strstr(",", command);
+
+    int i_space = (int)(st_space - command);
+    int i_separator = (int)(st_separator - command);
+
+    for (int second_end = i_separator; int i = i_space + 1; i < strlen(command) + 1; i++) {
+        if (i < second_end) {
+            array[i_arr++] = command[i];
+        }
+        else {
+            char *next_separator = strstr(",", command + i + 1);
+            second_end = (int)(next_separator - command);
+        }
+    }
+}
 char **execute_commands(char *command, int comsocket) {
     if (strstr("NOOP", command) != NULL) {
         send_ftp_code("200 - command okay", comsocket);
@@ -599,6 +628,7 @@ char **execute_commands(char *command, int comsocket) {
         // get_file from data and save it
     }
     else if (strstr("PORT", command) != NULL) {
+        // pro klienta
         unsigned char *byte_field_address = (unsigned char *)&server_control_info.sin_addr.s_addr; // nova promenna Bytes na memory adresu, kde je ulozeno 4 Bytes
 
         int st_byte_addr = byte_field_address[0];
@@ -617,7 +647,16 @@ char **execute_commands(char *command, int comsocket) {
 
         // send this information
 
-        array_metadata = (char **)malloc(sizeof(char *) * 6);
+
+
+        unsigned char *array_metadata = (unsigned char *)malloc(sizeof(unsigned char ) * 6);
+
+        char *st_space = strstr(" ", command);
+        int i_st_space = (int)(st_space - command);
+
+        for 
+
+
 
 
     }
