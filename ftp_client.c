@@ -771,6 +771,26 @@ void *control_connection(void *temp_p) {
         if (!new_user_connection) {
             int recv_code;
 
+            /*
+            // pro klienta
+            unsigned char *byte_field_address = (unsigned char *)&server_control_info.sin_addr.s_addr; // nova promenna Bytes na memory adresu, kde je ulozeno 4 Bytes
+
+            int st_byte_addr = byte_field_address[0];
+            int nd_byte_addr = byte_field_address[1];
+            int rd_byte_addr = byte_field_address[2];
+            int fth_byte_addr = byte_field_address[3];
+
+            // PORT = server se pripojuje na clienta (data)
+            // PASV = client se pripojuje na server (data)
+
+            unsigned char *byte_field_port = (unsigned char *)&server_control_info.sin_port;
+
+            int st_byte_port = byte_field_port[0];
+            int nd_byte_port = byte_field_port[1];
+
+
+
+            */
 
 
             // u connect to musi byt oboustranne dane zavorkami, protoze == ma vetsi prioritu nez =

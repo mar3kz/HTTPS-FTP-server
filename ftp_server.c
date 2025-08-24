@@ -1,3 +1,4 @@
+// AVE CHRISTUS REX!
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
@@ -22,6 +23,7 @@
 #include <event2/event.h> // libevent je knihovna, ktera slouzi k tomu, ze kazdy file descriptor/signal apod. kdyz se na nem stane neco noveho, tak nam to da vedet => multisynchronnous
 #include <event2/buffervent.h>
 #include <mqueue.h> // pro komunikaci mezi procesy/threads
+#include <stdint.h> // uint32_t
 // event2, protoze to je novejsi verze, kdybych tam dal jenom event, tak
 // #include <event.h>
 //#include <openssl/ssl/ssl_local.h>
@@ -179,6 +181,7 @@ struct mq_attr attributes = {
 
 int count = 0;
 int css_already = 0;
+
 struct sockaddr_in server_control_info;
 struct sockaddr_in server_data_info;
 
@@ -566,35 +569,131 @@ void signal_handler() {
 
 // }
 
-char **metadata_command(char *command) {
+// PORT = ACTIVE DATA CONNECTION
+// PASV = PASSIVE DATA CONNECTION
+
+void send_server_st_reply(int ftp_control_com) {
+
+}
+
+int make_port_connection(uint32_t address, short int port, struct Ftp_Sockets *ptr) {
+    struct sockaddr_in client_addr_port;
+
+    client_addr_port.sin_family = AF_INET; // address family
+    client_addr_port.sin_port = port;
+    client_addr_port.sin_addr = address;
+
+    int socket = connect(ptr->ftp_data_socket, (struct sockaddr *)client_addr_port, sizeof(struct sockaddr_in));
+    ptr->ftp_data_com = socket;
+
+    return fto_data_com;
+}
+
+short int return_port(char **metadata_command) {
+    short int port;
+    unsigned char *port_array = malloc(sizeof(unsigned char ) * 2);
+    for (int i = 4, i_port_arr = 0; i < 6; i++) {
+        port_array[i_port_arr++] = atoi(metadata_command[i]); // ASCII to Int
+    }
+    memcpy(&port, port_array, sizeof(unsigned char ) * 2); // takhle se kopiruji data celeho array do jedne promenne
+
+    return htons(port); // aby uz to bylo na network 
+}
+
+uint32_t return_address(char **metadata_command) {
+    uint32_t address;
+    unsigned char *address_array = (unsigned char *)malloc(4);
+
+    for (int i = 0, adress_array_i = 0; i < 5; i++) {
+        address_array[address_array_i++] = metadata_command[i]; 
+    }
+    memcpy(&address, address_array, sizeof(unsigned char ) * 4);
+
+    return htons(address);
+}
+
+char **metadata_command(char *command, struct Ftp_Sockets *ptr) {
     // pro PORT = 7 jednotlivych slov, pro PORT to neni potreba, protoze vime, ze tato funkce je primo pro PORT => 6 slov
     // PORT h1,h2,h3,h4,p1,p2
+    // PORT 12,255,64,38,10,20\r\n
+    // 25, 26
 
     char **array = (char **)calloc(6, sizeof(char *));
     int i_arr = 0;
+    int j_arr = 0;
+    // [i][j]
 
     for (int i = 0; i < 6; i++) {
         array[i] = (char *)malloc(4); // max IP adresa muze byt 255 => 3 chars + 1 pro \0
         memset(array[i], 0, 4); // automaticke NULL terminated strings
+        printf("\ns");
     }
 
-    char *st_space = strstr(" ", command);
-    char *st_separator = strstr(",", command);
+    char *st_space = strstr(command, " "); // kde a co
+    if (st_space == NULL) {
+        fprintf(stderr, "strstr nenaslo ' '");
+        exit(EXIT_FAILURE);
+    }
+
+    char *st_separator = strstr(command, ","); // kde a co
+    if (st_space == NULL) {
+        fprintf(stderr, "strstr nenaslo ,");
+        exit(EXIT_FAILURE);
+    }
 
     int i_space = (int)(st_space - command);
     int i_separator = (int)(st_separator - command);
 
-    for (int second_end = i_separator; int i = i_space + 1; i < strlen(command) + 1; i++) {
+    for (int second_end = i_separator, i = i_space + 1; i < strlen(command) + 1; i++) { // musime specifikovat typ pouze jednou
         if (i < second_end) {
-            array[i_arr++] = command[i];
+            array[i_arr][j_arr++] = command[i];
+
+            printf("\nhalo: %c", array[i_arr][j_arr]);
         }
         else {
-            char *next_separator = strstr(",", command + i + 1);
+            char *next_separator = (strstr(command + i + 1, ",") == NULL) ? strstr(command + i + 1, "\r") : strstr(command + i + 1, ","); // kde a co
+            if (next_separator == NULL && i < 15) { // cca 15 muze byt minimalni pocet, kde muze opravdu nastat chyba
+                fprintf(stderr, "strstr nenaslo , ani CR");
+                exit(EXIT_FAILURE);
+            }
+            else if (next_separator == NULL && i > 15) {
+                break;
+            }
             second_end = (int)(next_separator - command);
+            printf("\nsecond_end: %d, %c", second_end, command + 1 + i);
+            i_arr++;
+            j_arr = 0;
         }
     }
+    return array;
 }
-char **execute_commands(char *command, int comsocket) {
+
+char *extract_username_password(char *command_user_pass) {
+    char *info = (char *)malloc(sizeof(char) * 9); // 8 chars + \0, protoze max username a passwod je 8 chars (jako i z http serveru), 9 chars => 8 chars + \0 
+    memset(info, 0, sizeof(char) * 9); // automaticky NULL terminated
+
+    char *space = strstr(" ", command_user_pass);
+    int space_i = (int)(space - command_user_pass);
+
+    char *end = strstr("\r", command_user_pass); // CRLF konci kazdy FTP command (Telnet)
+    int end_i = (int)(end - command_user_pass);
+
+    for (int i = space_i + 1, info_i = 0; i < end_i; i++) {
+        info[info_i++] = command_user_pass[i];
+    }
+    info[info_i] = '\0'; // explicitni NULL terminator, i kdyz by to melo fungovat i bez toho, protoze tam je to memset()
+
+    return info;
+}
+
+char **execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
+    if (strstr("USER", command) != NULL) {
+        char *username = extract_username_password(command);
+    }
+    else if (strstr("PASS", command) != NULL) {
+        char *password = extract_username_password(command);
+        Account_Spec result = login_lookup        
+    }
     if (strstr("NOOP", command) != NULL) {
         send_ftp_code("200 - command okay", comsocket);
         return NULL; // muzeme vratit NULL, protoze void * pointer ((void *)0) muze nabyvat jakehokoliv typu
@@ -614,7 +713,6 @@ char **execute_commands(char *command, int comsocket) {
         send_file_bypath();
     }
     else if (strstr("STOR", command) != NULL) {
-
         char *st_space = strstr(" ", command);
         int i_st_space = (int)(st_space - command);
 
@@ -628,39 +726,16 @@ char **execute_commands(char *command, int comsocket) {
         // get_file from data and save it
     }
     else if (strstr("PORT", command) != NULL) {
-        // pro klienta
-        unsigned char *byte_field_address = (unsigned char *)&server_control_info.sin_addr.s_addr; // nova promenna Bytes na memory adresu, kde je ulozeno 4 Bytes
-
-        int st_byte_addr = byte_field_address[0];
-        int nd_byte_addr = byte_field_address[1];
-        int rd_byte_addr = byte_field_address[2];
-        int fth_byte_addr = byte_field_address[3];
-
-        // PORT = server se pripojuje na clienta (data)
-        // PASV = client se pripojuje na server (data)
-
-        unsigned char *byte_field_port = (unsigned char *)&server_control_info.sin_port;
-
-        int st_byte_port = byte_field_port[0];
-        int nd_byte_port = byte_field_port[1];
-
-
         // send this information
+        char **array = metadata_command(command, ptr);
+        // x1,x2,x3,x4,p1,p2
 
-
-
-        unsigned char *array_metadata = (unsigned char *)malloc(sizeof(unsigned char ) * 6);
-
-        char *st_space = strstr(" ", command);
-        int i_st_space = (int)(st_space - command);
-
-        for 
-
-
-
-
+        short int port = return_port(array);
+        uint32_t address = return_address(array);
+        int ftp_data_com = make_port_connection(address, port, ptr);
     }
 }
+
 
 void buf_event_read_callback(struct bufferevent *buf_event, short events, void *ptr_arg) {
     struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)ptr_arg;
@@ -668,7 +743,6 @@ void buf_event_read_callback(struct bufferevent *buf_event, short events, void *
     switch(ftp_socket_p->control_or_data) {
         case CONTROL:
             unsigned char *command = (unsigned char *)malloc(256);
-
             ssize_t bytes_received = 0;
             size_t bytes_received_total;
 
@@ -680,7 +754,7 @@ void buf_event_read_callback(struct bufferevent *buf_event, short events, void *
                     exit(EXIT_FAILURE);
                 }
                 else if (command[bytes_received - 1] == 0xD && command[bytes_received] == 0xA) { // \r\n, takhle se zakoncuji FTP prikazy \r == 13 dec, \n == 10 dec
-                    execute_commands(command);
+                    execute_commands(command, ftp_sockets_p);
                 }
                 bytes_received_total += bytes_received;
             }
@@ -2001,3 +2075,4 @@ void handling_response(struct Thread_specific thread_obj) {
         }
     }
 }
+// AVE CHRISTUS REX!

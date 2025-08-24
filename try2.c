@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <string.h>
+#include <arpa/inet.h> // htons()
 
 int MAX = 5;
 
@@ -111,6 +112,17 @@ char **metadata_command(char *command) {
         }
     }
     return array;
+}
+
+short int return_port(char **metadata_command) {
+    short int port;
+    unsigned char *port_array = malloc(sizeof(unsigned char ) * 2);
+    for (int i = 4, i_port_arr = 0; i < 6; i++) {
+        port_array[i_port_arr++] = atoi(metadata_command[i]); // ASCII to Int
+    }
+    memcpy(&port, port_array, sizeof(unsigned char ) * 2); // takhle se kopiruji data celeho array do jedne promenne
+
+    return htons(port); // aby uz to bylo na network 
 }
 
 int main()
@@ -225,6 +237,10 @@ int main()
         printf("tady: %s", array[i]);
     }
     fflush(stdout);
+
+
+
+    printf("\n\n\n%d", return_port(array));
 
     // if ( strstr("tigujtg\r", "\r") == NULL) {
     //     printf("\nneni");
