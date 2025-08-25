@@ -736,8 +736,8 @@ void *control_connection(void *temp_p) {
     printf("| DATA REPRESENTATION: ASCII NONPRINT (N) |");
     printf("| TRANSMISSION MODE  : STREAM             |");
     printf("| DATA STRUCTURE     : FILE-STRUCTURE     |");
-    printf("| COMMANDS: USER, PASS, QUIT, PORT, RETR  |");
-    printf("|           STOR, NOOP, TYPE              |");
+    printf("| COMMANDS: USER, PASS, QUIT, PORT, PASV  |");
+    printf("|           RETR, STOR, NOOP, TYPE        |");
     printf("+-----------------------------------------+");
     // tento socket bude blocking, protoze budeme vzdy cekat na odpoved od serveru
     // nedela nic specialniho; pokud bude false, tak se to ukonci; nedela nic specialniho
@@ -748,7 +748,8 @@ void *control_connection(void *temp_p) {
     printf("| USER string = log in - necessary 1st command!  |"); // 2
     printf("| PASS string = log in - necessary 2nd command!  |"); // 2
     printf("| QUIT        = log out (files will be sent)     |"); // 1
-    printf("| PORT        = change default port for data tr. |"); // 7
+    printf("| PORT        = server -> client data con.       |"); // 7
+    printf("| PASV        = client -> server data con.       |"); // 0
     printf("| RETR        = retrieve last specified file by  |"); // 1
     printf("| STOR        = send a file to server            |"); // 2
     printf("| NOOP        = server will send OK code & msg   |"); // 1

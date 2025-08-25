@@ -116,6 +116,7 @@ typedef struct Ftp_User_Info {
     int user_loggedin;
     Ftp_Data_Repre data_represantation;
 }
+struct Ftp_User_Info ftp_user_info = {.username = NULL, .password = NULL, .user_loggedin = 0};
 
 // struct Handling_response_struct {
     // int httpcomsocket;
@@ -167,15 +168,20 @@ struct Ftp_Sockets {
     int ftp_data_socket;
     int ftp_data_com;
 
-    enum Ftp_type control_or_data;
+    enum Ftp_Sockets type;
 };
-struct Ftp_Sockets ftp_sockets;
+struct Ftp_Sockets ftp_sockets = {.type = CONTROL};
 
 struct mq_attr attributes = {
         .mq_flags = O_NONBLOCK, // tady muze byt jenom O_NONBLOCK
         .mq_maxmsg = 8, // max messages, kolik jich muze byt v queue
         .mq_msgsize = 256, // Bytes => velikost
         .mq_curmsgs = 0, // current messages v queue
+};
+
+struct Ptr_To_Bufevents {
+    struct Ftp_Sockets *ptr;
+    char *command;
 };
 
 
@@ -506,7 +512,6 @@ void DumpHex(const void* data, size_t size) {
 }
 
 void signal_handler() {
-
 }
 
 // static void ftp_pi(struct Ftp_Sockets *arg) {
@@ -685,6 +690,45 @@ char *extract_username_password(char *command_user_pass) {
 
     return info;
 }
+int available_commands(char *text) {
+    // linux pouziva pro novy radek (\n) - Line Feed (0x0aA)
+    // getline() bere celou radku ze souboru (dokud nenarazi na \n), getdelim() cte do te doby, nez se nenajde specifikovany delimiter
+    FILE *f_stream = fopen("./TXT/available_commands.txt", "r");
+
+    char *command_from_text = (char *)malloc(5);
+    memset(command_from_text, 0, 5); // automaticky NULL terminating
+
+    for (int i = 0; i < 5; i++) {
+        command_from_text[i] = text[i];
+    }
+
+    if (f_stream == NULL) {
+        perror("fopen() neotevrel soubor FTP_SERVER/TXT/available_commands.txt - is_command_or_data");
+    }
+
+    size_t len = 0;
+    char *line = NULL;
+
+    ssize_t chars_read;
+    while ( (chars_read = getline(&line, &len, f_stream)) != -1) { // pokud -1 => EOF a EOF indicator set => feof(), vraci se pocet chars i s delimiterem, ale bez \0
+        line[chars_read - 1] = '\0';
+        if ( strcmp(line, command_from_text) != 0) { // nerovnaji se
+            return 0; // false
+        }
+    }
+    return 1; // true
+}
+enum Ftp_Type is_command_or_data(int comsocket) {
+    char *data = (char *)malloc(31); // maximalni delka zpravy od ftp serveru => 30 chars + \0
+    memset(data, 0, 31); // automaticky NULL terminated
+    recv(comsocket, data, 31, MSG_PEEK); // to, co se precte se neodebere ze TCP stack internal bufferu
+
+    if ( available_commands(data) && strstr("\r\n", text) != NULL) {
+        return CONTROL;
+    }
+    return DATA;
+}
+
 
 char **execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
     if (strstr("USER", command) != NULL) {
@@ -734,76 +778,100 @@ char **execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
         uint32_t address = return_address(array);
         int ftp_data_com = make_port_connection(address, port, ptr);
     }
-}
-
-
-void buf_event_read_callback(struct bufferevent *buf_event, short events, void *ptr_arg) {
-    struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)ptr_arg;
-
-    switch(ftp_socket_p->control_or_data) {
-        case CONTROL:
-            unsigned char *command = (unsigned char *)malloc(256);
-            ssize_t bytes_received = 0;
-            size_t bytes_received_total;
-
-            // UDP dela to, ze pokud supplied buffer je mensi nez samotna zprava, tak se naplni buffer a potom se zbytek dat orizne, zatimco TCP toto nedela a data cekaji v TCP stack bufferu
-            // ftp commands jsou ukonceny CRLF jako v Telnetu (\r\n)
-            while ( (bytes_received = recv(ftp_sockets_p->control_com, command + bytes_received_total, 256 - bytes_received_total, 0)) != 0) { // return value 0 = EOF/ 0 bytes prislo
-                if (bytes_received == -1) {
-                    perror("recv() selhal - receive_code_data");
-                    exit(EXIT_FAILURE);
-                }
-                else if (command[bytes_received - 1] == 0xD && command[bytes_received] == 0xA) { // \r\n, takhle se zakoncuji FTP prikazy \r == 13 dec, \n == 10 dec
-                    execute_commands(command, ftp_sockets_p);
-                }
-                bytes_received_total += bytes_received;
+    else if (strstr("PASV", command)) {
+        const char *address = (const char *)malloc(INET_ADDRSTRLEN); // 255.255.255.255 => 15 + \0 => INET_ADDRSTRLEN
+        if ( !inet_ntop(server_data_info.sin_family, &server_data_info.sin_addr.s_addr, address, INET_ADDRSTRLEN)) {
+            perror("inet_ntop() selhalo - execute_commands");
+        }
+        
+        for (int i = 0; i < INET_ADDRSTRLEN; i++) {
+            if (address[i] == '.') {
+                address[i] = ',';
             }
+        }
+        unsigned char *port_array = &server_data_info.sin_port;
+        int st_Byte_port = port_array[0];
+        int nd_Byte_port = port_array[1];
 
-            // commands
-            break;
-        case DATA:
-            // sending file
+        char *reply = (char *)malloc(50);
+        memset(reply, 0, 50);
 
-            break;
-        default:
-            fprintf(stderr, "unrecognized Ftp_Type receive_code_data");
-            exit(EXIT_FAILURE);
-            break;
+        snprintf(reply, 49, "227 Entering Passive Mode (%s,%d,%d)", address, st_Byte_port, nd_Byte_port); // prida i \0
     }
 }
 
-void event_callback(evutil_socket_t fd, short what, void *arg) {
-    // (expression) ? express_true : express_false
-    printf("\nsocket: %d -> event: %s", fd, (what&EV_READ) ? "read" : "", (what&EV_WRITE) ? "write" : "");
+void bufevent_read_cb_control(struct bufferevent *buf_event, short events, void *ptr_arg) {
+    // v bufferu muzou byt vice TCP segmentu (data z TCP segmentu)
+    struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)ptr_arg;
+
+    unsigned char *command = (unsigned char *)malloc(256);
+    ssize_t bytes_received = 0;
+    size_t bytes_received_total;
+
+    // UDP dela to, ze pokud supplied buffer je mensi nez samotna zprava, tak se naplni buffer a potom se zbytek dat orizne, zatimco TCP toto nedela a data cekaji v TCP stack bufferu
+    // ftp commands jsou ukonceny CRLF jako v Telnetu (\r\n)
+    char *possible_crlf;
+    while ( (bytes_received = recv(ftp_sockets_p->control_com, command + bytes_received_total, 256 - bytes_received_total, 0)) != 0) { // return value 0 = EOF/ 0 bytes prislo
+        if (bytes_received == -1) {
+            perror("recv() selhal - receive_code_data");
+            exit(EXIT_FAILURE);
+        }
+        else if (possible_crlf = strstr("\r\n", command)) { // \r\n, takhle se zakoncuji FTP prikazy \r == 13 dec, \n == 10 dec
+            int crlf_i = (int)(possible_crlf - command); // pokud by byly vice commands, tak se to muze udelat pomoci MSG_PEEK, zkusit nejakou delku a potom opravdu to precist apod.
+            execute_commands(command, ftp_sockets_p);
+        }
+        bytes_received_total += bytes_received;
+    }
 }
 
-void buf_event_write_callback(struct bufferevent *buf_event, short events, void *ptr_arg) {
+void send_control(int control_com, char *buf) {
+    ssize_t bytes_total = 0;
+    size_t bytes_sent;
+    while ( bytes_sent = send(control_com, buf + bytes_total, (strlen(buf) + 1) - bytes_total, 0) ) {
+        if (bytes_sent == -1) {
+            perror("send() selhal - bufevent_write_cb_control");
+            exit(EXIT_FAILURE);
+        }
+        bytes_total += bytes_sent;
+    }
+}
+
+void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void *ptr_arg) {
     // control/data connection
     // based on that either send file or send an ftp code
     struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)ptr_arg;
 
-
-    switch(ftp_socket_p->control_or_data) {
-        case CONTROL:
+    switch(ftp_user_info.user_loggedin) {
+        case 0:
+            if (ftp_user_info.username == NULL) {
+                char *buf = "Name (!AVE CHRISTUX REX FTP SERVER!) Name: ";
+                send_control(ftp_sockets_p->control_com, buf);
+            }
+            else if (ftp_user_info.password == NULL) {
+                char *buf = "Password: ";
+                send(ftp_sockets_p->control_com, buf);
+            }
+            // false
             break;
-        case DATA:
-
-
-
+        case 1:
+            // true
             break;
         default:
-            fprintf(stderr, "ftp_sockets_p->control_or_data - buf_event_write_callback selhal");
+            fprintf(stderr, "spatna hodnota u user_loggedin - bufevent_write_cb_control");
             exit(EXIT_FAILURE);
             break;
     }
+    ;
+
+    // pokud user logged in, tak pokracovat, pokud ne, tak poslat USER, PASS
 }
 
-void *control_connection(void *temp_p) {
+void *handle_ftp_connections(void *temp_p) {
     struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)temp_p;
 
-    int ftp_control_com = ftp_sockets_p->ftp_control_com; // nebude zmateni, kompilator vi, ze nalevo je promenna a napravo je clen struktury, proto si to nepoplete
-    // kdyz nevime delku zpravi, tak bud musime poslat pred samotnou zpravou, kolik Bytes to bude chtit nebo udelame non-blocking socket => libevent
-    ftp_sockets_p->control_or_data = CONTROL;
+    // int ftp_control_com = ftp_sockets_p->ftp_control_com; // nebude zmateni, kompilator vi, ze nalevo je promenna a napravo je clen struktury, proto si to nepoplete
+    // // kdyz nevime delku zpravi, tak bud musime poslat pred samotnou zpravou, kolik Bytes to bude chtit nebo udelame non-blocking socket => libevent
+    // ftp_sockets_p->control_or_data = CONTROL;
 
     struct event_base *evbase = event_base_new(); // default settings
 
@@ -814,7 +882,7 @@ void *control_connection(void *temp_p) {
 
     struct bufferevent *buf_event = bufferevent_socket_new(evbase, ftp_control_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS); // thread safe
 
-    bufferevent_setcb(buf_event, buf_event_read_callback, buf_event_write_callback, NULL, ftp_sockets_p); // prvni NULL je pro eventcb, coz by melo byt ale stejny cb jako u event_base, 2. NULL je pointer na argumenty ke vsem temto funkcim
+    bufferevent_setcb(buf_event, bufevent_read_cb_control, bufevent_write_cb_control, NULL, ftp_sockets_p); // prvni NULL je pro eventcb, coz by melo byt ale stejny cb jako u event_base, ftp_sockets_p je pointer na argumenty ke vsem temto funkcim
 
     // edge-trigger event a level event trigger
     // toto se pouziva i digitalnich obvodech, ale v trochu jinem svetle, ale predstavme si 0 a 1 a stav mezi nimi, zkracene to znamena kdyz mame nejake event (hodnotu 0 nebo 1), tak u level event trigger dostaneme notifikaci s tim, ze event byl spusten a tato notifikace nam zustane porad nekde ulozena (u epoll revents nebo u libevent), ale porad tam bude napsane, ze je mozno neco udelat, ale kdyz to bude edge trigger, tak dostaneme jenom tu notifikaci o tom, ze neco je pripravene a tuto notifikaci dostaneme jenom jednou do te doby nez treba ten socket neprecteme z neho vsechny data a potom az muzeme dostat dalsi upozorneni od onoho socketu, takovy nonblocking upozorneni
@@ -823,17 +891,21 @@ void *control_connection(void *temp_p) {
     event_add(event_read, NULL); // event pending, to druhe je pro timeval struct pro timeval struct, proto, aby se v event loopu cekalo na ten timeout a potom se reklo, jestli se ten event opravdu stal nebo ne
 
     event_base_loop(event_base, EVLOOP_NONLOCK | EVLOOP_NO_EXIT_ON_EMPTY); // bude cekat nez se nejake eventy udelaji ready a pokud zadne nebudou ready, tak se z tohoto loopu nevyskoci
-
-
-
-
-
 }
-
+// BUFFEREVENT ZNAMENA ZE SE TO BUDE PSAT ZA NAS, HIGH-LEVEL API
 void *data_connection(void *temp_p) {
     struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)temp_p;
 
     int ftp_data_com = ftp_sockets_p->ftp_data_com; // nebude zmateni, kompilator vi, ze nalevo je promenna a napravo je clen struktury, proto si to nepoplete
+
+    struct event_base *evbase = event_base_new(); // struct holding events
+    
+    if (event_base == NULL) {
+        perror("event_base_new() selhalo");
+        exit(EXIT_FAILURE);
+    }
+
+    struct bufferevent *buf_event = bufferevent_socket_new(); // umozni nam ziskat eventy o sockety 
 
 
 
@@ -861,8 +933,8 @@ void *select_ftp(void *ftp_sockets) {
     FD_SET(ftp_sockets_p->ftp_control_socket, &readbitmask);
     FD_SET(ftp_sockets_p->ftp_data_socket, &readbitmask);
 
-    void *(*f_control_con)(void *) = &control_connection;
-    void *(*f_data_con)(void *) = &data_connection;
+    void *(*handle_ftp)(void *) = &handle_ftp_connections;
+    // void *(*f_data_con)(void *) = &data_connection;
 
     // read, write, exception
     // kousek na tom socketu prijme, kousek na tom socketu zapise, moc se nedeje, je to exception treba out of band data u TCP
@@ -883,7 +955,7 @@ void *select_ftp(void *ftp_sockets) {
         ftp_sockets_p->ftp_control_com = accept(ftp_sockets_p->ftp_control_socket, NULL, NULL);
         pthread_t thread_control;
 
-        if ( (thread_control = (pthread_create(thread_control, NULL, f_control_con, ftp_sockets))) !=  0) {
+        if ( (thread_control = (pthread_create(thread_control, NULL, handle_ftp, (void *)ftp_sockets))) !=  0) {
             perror("pthread_create() selhal - select_ftp");
             exit(EXIT_FAILURE);
         }
