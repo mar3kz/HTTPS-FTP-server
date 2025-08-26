@@ -24,6 +24,7 @@
 #include <event2/buffervent.h>
 #include <mqueue.h> // pro komunikaci mezi procesy/threads
 #include <stdint.h> // uint32_t
+#include <mqueue.h> // komunikace mezi jeden thread
 // event2, protoze to je novejsi verze, kdybych tam dal jenom event, tak
 // #include <event.h>
 //#include <openssl/ssl/ssl_local.h>
@@ -117,6 +118,8 @@ typedef struct Ftp_User_Info {
     Ftp_Data_Repre data_represantation;
 }
 struct Ftp_User_Info ftp_user_info = {.username = NULL, .password = NULL, .user_loggedin = 0};
+
+
 
 // struct Handling_response_struct {
     // int httpcomsocket;
@@ -729,29 +732,90 @@ enum Ftp_Type is_command_or_data(int comsocket) {
     return DATA;
 }
 
+int partial_login_lookup(char *text, int username_password) {
+    // 0 - username
+    // 1 - password
+    FILE *fs = fopen("./TXT/account.txt", "r+");
+
+    if (fs == NULL) {
+        perror("fopen() selhal - partial_login_lookup()");
+        exit(EXIT_FAILURE);
+    }
+    char **account_info = (char **)malloc(sizeof(char *) * 2);
+    account_info[0] = (char *)malloc(9); // protoze max je 8 chars => + \0
+    account_info[1] = (char *)malloc(9); // 8 chars + \0
+    memset(account_info[0], 0, 9); // automaticky NULL terminated
+    memset(account_info[1], 0, 9); // automaticky NULL terminated
+
+    char *line = NULL; // toto se automaticky alokuje
+    size_t n = 0; // toto se automaticky updatuje
+    ssize_t chars_read;
+    while ( (chars_read = getline(&line, n, fs)) != -1) {
+        char *line_separator = strstr(" ", line);
+        int line_separator_i = (int)(line_separator - line);
+
+        int len_line = strlen(line) - 1; // strlen(line) je i s \n a bez \0
+        memcpy(account_info[0], line, line_separator_i - 1); // username
+        memcpy(account_info[1], line + line_separator + 1, len_line - (line_separator + 1)); // password
+
+        switch(username_password) {
+            case 0:    
+                if (strcmp(account_info[0], text) == 0) {
+                    return 0;
+                }
+            case 1:
+                if ( strcmp(account_info[1], text) == 0) {
+                    return 0;
+                }
+            default:
+                fprintf(stderr, "username_password faulty - partial_login_lookup");
+                exit(EXIT_FAILURE);
+                break;
+        }
+
+        memset(account_info[0], 0, 9); // reset bufferu
+        memset(account_info[1], 0, 9); // reset bufferu
+    }
+    return 1;
+}
+
 
 char **execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
+    mqd_t control_message_queue = mq_open("/control_queue", O_RDWR);
+
     if (strstr("USER", command) != NULL) {
         char *username = extract_username_password(command);
+        int result = partial_login_lookup(username, 0);
+        
+        // ("331 - User name okay, password needed")
+        // ("430 - Invalid username or password (usernme)")
+        // send code to mqueue for sending
     }
     else if (strstr("PASS", command) != NULL) {
         char *password = extract_username_password(command);
-        Account_Spec result = login_lookup        
+        int result = partial_login_lookup(password, 1);
+
+        // (230 - User logged in, proceed)
+        // ("430 - Invalid username or password (password)")
+        // send code to mqueue for sending
     }
     if (strstr("NOOP", command) != NULL) {
-        send_ftp_code("200 - command okay", comsocket);
+        //("200 - command okay");
         return NULL; // muzeme vratit NULL, protoze void * pointer ((void *)0) muze nabyvat jakehokoliv typu
     }
     else if (strstr("TYPE", command) != NULL) {
         if (strstr("Image", command) != NULL) {
             data_representation = IMAGE;
+            //("200 - command okay");
         }
         else {
             data_representation = ASCII_N;
+            //("200 - command okay (stayed same)");
         }
     }
     else if (strstr("QUIT", command) != NULL) {
         current_user = NULL;
+        // ("221 - Service closing control connection. Logged out if appropriate")
     }
     else if (strstr("RETR", command) != NULL) {
         send_file_bypath();
@@ -798,6 +862,9 @@ char **execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
 
         snprintf(reply, 49, "227 Entering Passive Mode (%s,%d,%d)", address, st_Byte_port, nd_Byte_port); // prida i \0
     }
+    else {
+        // ()
+    }
 }
 
 void bufevent_read_cb_control(struct bufferevent *buf_event, short events, void *ptr_arg) {
@@ -824,36 +891,30 @@ void bufevent_read_cb_control(struct bufferevent *buf_event, short events, void 
     }
 }
 
-void send_control(int control_com, char *buf) {
-    ssize_t bytes_total = 0;
-    size_t bytes_sent;
-    while ( bytes_sent = send(control_com, buf + bytes_total, (strlen(buf) + 1) - bytes_total, 0) ) {
-        if (bytes_sent == -1) {
-            perror("send() selhal - bufevent_write_cb_control");
-            exit(EXIT_FAILURE);
-        }
-        bytes_total += bytes_sent;
-    }
-}
-
 void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void *ptr_arg) {
     // control/data connection
     // based on that either send file or send an ftp code
     struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)ptr_arg;
 
     switch(ftp_user_info.user_loggedin) {
-        case 0:
+        case 0: // false
             if (ftp_user_info.username == NULL) {
                 char *buf = "Name (!AVE CHRISTUX REX FTP SERVER!) Name: ";
-                send_control(ftp_sockets_p->control_com, buf);
+                if (bufferevent_write(buf_event, buf, strlen(buf) + 1) == -1) { // da data do output bufferu (struct evbuffer) struct bufferevent
+                    perror("bufferevent_write() selhal - write_control_cb - username");
+                    exit(EXIT_FAILURE);
+                }
             }
             else if (ftp_user_info.password == NULL) {
                 char *buf = "Password: ";
-                send(ftp_sockets_p->control_com, buf);
+                if ( bufferevent_write(buf_event, buf, strlen(buf) + 1) == -1) {
+                    perror("bufferevent_write() selhal - write_control_cb - password");
+                    exit(EXIT_FAILURE);
+                }
             }
-            // false
             break;
         case 1:
+            // poslat codes z mqueue => z execute commands
             // true
             break;
         default:
@@ -865,6 +926,15 @@ void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void
 
     // pokud user logged in, tak pokracovat, pokud ne, tak poslat USER, PASS
 }
+
+// struct event, event_base, bufferevent, evbuffer
+// event je samotny event, ktery se bude hlidat pro dany file descriptor
+// event_base je struktura, kde mohou byt ulozene vsechny file descriptory a ty jejich eventy struct event structures
+// bufferevent je abstraktura nad network I/O, kde kazdy bufferevent ma svuj vlastni event_base a pokud underlying vrstva prijme data, tak se zavolaji ty samotne callbacky
+// evbuffer ma dva poslani: slouzi bud jako fronta u normalni buffer I/O, nebo je u bufferevent, kde slouzi k posilani dat
+// takze pokud mame cb u event a u bufferevent, tak se zavola callback u bufferevent
+
+// bufferevent ma input a output buffer, s tim ze input buffer je read a output buffer je write
 
 void *handle_ftp_connections(void *temp_p) {
     struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)temp_p;
@@ -946,7 +1016,11 @@ void *select_ftp(void *ftp_sockets) {
     fflush(stdout);
     // select vraci total pocet vsech file desciptoru, ktere jsou volne na operaci (v ramci daneho fd_setu)
     // pokud se tento if statement nestane, tak ono prijde SYN => SYN queue, odesle se SYN + ACK => client je touto dobou uz pripojeny, posle ACK, ted je server pripojeny, ale je to pripojene jenom na kernel level, protoze server neudelal accept()! => z tohoto muze byt velky problem => SYN flood, connection pool flooding => DoS
+    // atomicka operace je ta, ktera bezi bez preruseni
     if (rv == 2) {
+        // proces ma 4 nejhlavnejsi identity => RUID (Real U - user ID), EUID (Effective UID), RGID (Real group id), EGID (Effective group id), nejhlavnejsi jsou ale RUID a EUID, AUID => je cislo, ktere se priradi userovi kdyz se prihlasi a pokazde kdyz ten user spusti nejaky program, tak ten proces zdedi tento AUID => audit user ID
+        // pokud bude mode jiny nez ma samotny soubor, tak se to rozhodne podle implemetance UNIX/Linux, nase implementace bude mit permise 4777 -> man mq_open
+        mdq_t control_message_queue = mq_open("/control_queue", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO, S_ISUID, NULL); // 4777 -> /name pokud bude tady nekde mq_open se stejnou hodnotou, tak se to odkazuje na tu stejnou mqueue
         printf("\n\n\nANO, JE TO VSE OK\n\n\n\n\n");
         fflush(stdout);
 

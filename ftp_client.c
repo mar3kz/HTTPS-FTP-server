@@ -724,7 +724,7 @@ void send_ftp_code(char *message, int ftp_control_com) {
 
 // protoze FTP server (originalni implementaci podporuje jenom ascii soubory), takze nemuzeme posilat treba veci v cestine, protoze to je jina encoding sada, tak prakticky jenom zalezi, jak se interne ulozi ty chars, protoze, pokud v programu to ulozime jako unsigned char => 1 Bytes, tak kdybychom chteli ulozit 2 Bytes znak do 1 Bytes znaku, tak by to nefungovalo
 // tento server bude podporovat jenom ASCII (potom kdyztak utf-8)
-void *control_connection(void *temp_p) {
+void *handle_ftp(void *temp_p) {
     // client nemusi mit setsockopt SO_REUSEADDR, protoze se binduje k nejakemu stanovemu portu, client ma svuj lokalni port, takze se vzdycky zmeni
     struct Control_Args *control_arg_struct = (struct Control_Args *)temp_p;
 
@@ -920,8 +920,8 @@ int main() {
 
     struct Data_Args data_args = { .ftp_d_socket = ftp_data_socket, .server_d_info = &server_data_info};
 
-    void *(* f_control_connection)(void *) = &control_connection; // int, struct sockaddr **
-    void *(* f_data_connection)(void *) = &data_connection; // int, struct sockaddr **
+    void *(* f_control_connection)(void *) = &handle_ftp; // int, struct sockaddr **
+    // void *(* f_data_connection)(void *) = &data_connection; // int, struct sockaddr **
 
     if ( pthread_create(&thread_control, NULL, f_control_connection, (void *)&control_args)); { // NULL je atribut pro atribut strukturu, ktera specifikuje urcite atributy nove vytvoreneho thread, jako scheduling policy, inherit scheduler
         perror("pthread_create() selhal - thread_control");
