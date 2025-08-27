@@ -116,6 +116,9 @@ typedef struct Ftp_User_Info {
     
     int user_loggedin;
     Ftp_Data_Repre data_represantation;
+
+    int data_connection_sd;
+    int data_connection_port;
 }
 struct Ftp_User_Info ftp_user_info = {.username = NULL, .password = NULL, .user_loggedin = 0};
 
@@ -779,59 +782,163 @@ int partial_login_lookup(char *text, int username_password) {
     return 1;
 }
 
+void execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
+    // tato queue je zpusob komunikace mezi control a data funkcemi, budeme posilat jakekoliv zpravy s mensi priority hodnotou nez posilani zprav s paths, ktere mame poslat, aby v queue byly na uplnem vrcholu a aby se nemuselo cekat nez se odesle zprava, protoze path > zprava (priorita)
+    // zprava = 30, path = 31
 
-char **execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
-    mqd_t control_message_queue = mq_open("/control_queue", O_RDWR);
+    mqd_t mq_control_r_w = mq_open("/control_queue", O_RDWR);
+
+    const char msg4[] = "501 - Syntax error in parameters or arguments";
+    // const char msg2[] = "426 - Connection closed; transfer aborted";
 
     if (strstr("USER", command) != NULL) {
         char *username = extract_username_password(command);
         int result = partial_login_lookup(username, 0);
         
-        // ("331 - User name okay, password needed")
-        // ("430 - Invalid username or password (usernme)")
-        // send code to mqueue for sending
+        const char msg1[] = "331 - User name okay, password needed";
+        const char msg2[] = "430 - Invalid username or password (usernme)";
+
+        if (result == 0) { // OK
+            if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) { // 31 = nejvetsi priorita
+                perror("mq_send() selhalo - execute_commands - USER - msg1");
+                exit(EXIT_FAILURE);
+            }
+        }
+        else { // nenaslo se
+            if ( mq_send(mq_control_data, msg2, strlen(msg2) + 1, 30) == - 1) { // 31 = nejvetsi priorita
+                perror("mq_send() selhal - execute_commands - USER - msg2");
+                exit(EXIT_FAILURE);
+            }
+        }
     }
     else if (strstr("PASS", command) != NULL) {
         char *password = extract_username_password(command);
         int result = partial_login_lookup(password, 1);
 
-        // (230 - User logged in, proceed)
-        // ("430 - Invalid username or password (password)")
-        // send code to mqueue for sending
-    }
-    if (strstr("NOOP", command) != NULL) {
-        //("200 - command okay");
-        return NULL; // muzeme vratit NULL, protoze void * pointer ((void *)0) muze nabyvat jakehokoliv typu
-    }
-    else if (strstr("TYPE", command) != NULL) {
-        if (strstr("Image", command) != NULL) {
-            data_representation = IMAGE;
-            //("200 - command okay");
+        const char msg1[] = "230 - User logged in, proceed";
+        const char msg2[] = "430 - Invalid username or password (password)";
+        
+        if (result == 0) {
+            if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) {
+                perror("mq_send() selhal - execute commands - PASS - msg1");
+                exit(EXIT_FAILURE);
+            }
         }
         else {
+            if ( mq_send(mq_control_data, msg2, strlen(msg2) + 1, 30) == -1) {
+                perror("mq_send() selhal - execute commands - PASS - msg2");
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+    if (strstr("NOOP", command) != NULL) {
+        const char msg1[] = "200 - command okay";
+        
+        if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) {
+            perror("mq_send() selhal - execute commands - NOOP - msg1");
+            exit(EXIT_FAILURE);
+        }
+        // void * pointer ((void *)0) muze nabyvat jakehokoliv typu
+    }
+    else if (strstr("TYPE", command) != NULL) {
+        const char msg1[] = "200 - command okay";
+        const char msg2[] = "200 - command okay (stayed same)";
+        
+        if (strstr("Image", command) != NULL) {
+            if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) {
+                perror("mq_send() selhal - execute commands - TYPE - msg1");
+                exit(EXIT_FAILURE);
+            }
+            data_representation = IMAGE;
+        }
+        else {
+            if ( mq_send(mq_control_data, msg1, strlen(msg2) + 1, 30) == -1) {
+                perror("mq_send() selhal - execute commands - TYPE - msg2");
+                exit(EXIT_FAILURE);
+            }
             data_representation = ASCII_N;
-            //("200 - command okay (stayed same)");
         }
     }
     else if (strstr("QUIT", command) != NULL) {
+        const char msg1[] = "221 - Service closing control connection. Logged out if appropriate";
+
+        if ( mq_send(mq_control_data, msg1, strlen(msg) + 1, 30) == -1) {
+            perror("mq_send() selhal - execute commands - QUIT - msg1");
+            exit(EXIT_FAILURE);
+        }
         current_user = NULL;
-        // ("221 - Service closing control connection. Logged out if appropriate")
     }
     else if (strstr("RETR", command) != NULL) {
-        send_file_bypath();
+
+        const char msg1[] = "250 - Requested file action was okay, completed)";
+        const char msg2[] = "530 - Not Logged in - can't send file";
+        const char msg3[] = "425 - Can't open data connection";
+
+        if (ftp_user_info.user_loggedin && ftp_user_info.data_connection_sd != -1 && ftp_user_info.port != -1) { // OK
+            char *st_space = strstr(" ", command);
+            int i_st_space = (int)(st_space - command);
+
+            char *path = (char *)malloc(strlen(command) - i_st_space + 1);
+            int path_i = 0;
+            for (int i = i_st_space + 1; i < strlen(command) + 1; i++) {
+                path[path_i++] = command[i];
+            }
+            path[path_i] == '\0';
+
+            if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) { // file se posle
+                perror("mq_send() selhal - execute commands - RETR - msg1");
+                exit(EXIT_FAILURE);
+            }
+        }
+        else if (!ftp_user_info.user_loggedin) {
+            if ( mq_send(mq_control_data, msg2, strlen(msg2) + 1, 30) == -1) { // not logged in
+                perror("mq_send() selhal - execute commands - RETR - msg2");
+                exit(EXIT_FAILURE);
+            }
+        }
+        else {
+            if ( mq_send(mq_control_data, msg3, strlen(msg3) + 1, 30) == -1) { // neni otevrena data connection
+                perror("mq_send() selhal - execute commands - RETR - msg3");
+                exit(EXIT_FAILURE);
+            }
+        }
+        // send_file_bypath();
     }
     else if (strstr("STOR", command) != NULL) {
-        char *st_space = strstr(" ", command);
-        int i_st_space = (int)(st_space - command);
+        const char msg1 = "200 - Command okay";
+        const char msg2 = "532 - Need account for storing files";
+        const char msg3 = "501 - Syntax error in parameters or arguments";
 
-        char *path = (char *)malloc(strlen(command) - i_st_space + 1);
-        int path_i = 0;
-        for (int i = i_st_space + 1; i < strlen(command) + 1; i++) {
-            path[path_i++] = command[i];
+        if (ftp_user_info.user_loggedin) {
+            char *st_space = strstr(" ", command);
+            int i_st_space = (int)(st_space - command);
+
+            char *path = (char *)malloc(strlen(command) - i_st_space + 1);
+            int path_i = 0;
+            for (int i = i_st_space + 1; i < strlen(command) + 1; i++) {
+                path[path_i++] = command[i];
+            }
+            path[path_i] == '\0';
+
+            // ftp interpreter u klienta musi zadat path a na data connection se posle ten pozadovany soubor, my posleme zpravu s path, kde se file ma ulozit
+            if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) {
+                perror("mq_send() selhal - execute commands - STOR - msg1");
+                exit(EXIT_FAILURE);
+            }
+
+            // mqueue pro data connection needed - AVE CHRISTUS REX!                     
         }
-        path[path_i] == '\0';
+        else if (!ftp_user_info.user_loggedin) {
+            if ( mq_send(mq_control_data, msg2, strlen(msg2) + 1, 30) == -1) {
+                perror("mq_send() selhal - execute commands - STOR - msg2");
+                exit(EXIT_FAILURE);
+            }
+        }
+        
 
         // get_file from data and save it
+
+        
     }
     else if (strstr("PORT", command) != NULL) {
         // send this information
@@ -841,8 +948,17 @@ char **execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
         short int port = return_port(array);
         uint32_t address = return_address(array);
         int ftp_data_com = make_port_connection(address, port, ptr);
+
+        ftp_user_info.connection_sd = ftp_data_com;
+        ftp_user_info.connection_port = port;
+        // ted kdyz jsme udelali data connection, tak musime nastavit bufferevent a event_loop na tomto socket descriptoru a ty callbacky, stejne u PASV
+
+        // ("501 - Syntax error in parameters or arguments")
+        // aktivni - data connection - server initiates
+        
     }
     else if (strstr("PASV", command)) {
+        // passive - client starts every connection, server listens
         const char *address = (const char *)malloc(INET_ADDRSTRLEN); // 255.255.255.255 => 15 + \0 => INET_ADDRSTRLEN
         if ( !inet_ntop(server_data_info.sin_family, &server_data_info.sin_addr.s_addr, address, INET_ADDRSTRLEN)) {
             perror("inet_ntop() selhalo - execute_commands");
@@ -861,12 +977,20 @@ char **execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
         memset(reply, 0, 50);
 
         snprintf(reply, 49, "227 Entering Passive Mode (%s,%d,%d)", address, st_Byte_port, nd_Byte_port); // prida i \0
+
+        // ("227 - Entering Passive Mode (h1,h2,h3,h4,p1,p2)")
     }
     else {
-        // ()
+        const char msg1[] = "202 - Command not implemented, superfluous at this site"; // superfluous => nadbytecny 
+        if ( mq_send(control_message_queue, msg1, strlen(msg) + 1, 30) == -1) {
+            perror("mq_send() selhal - execute commands - QUIT");
+            exit(EXIT_FAILURE);
+        }
     }
 }
 
+
+// nemusime implementovat event_cb, protoze kazda funkce dostava short events, kde muzeme treba zjistit, jestli peer disconectnul socket
 void bufevent_read_cb_control(struct bufferevent *buf_event, short events, void *ptr_arg) {
     // v bufferu muzou byt vice TCP segmentu (data z TCP segmentu)
     struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)ptr_arg;
@@ -913,7 +1037,7 @@ void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void
                 }
             }
             break;
-        case 1:
+        case 1: // true
             // poslat codes z mqueue => z execute commands
             // true
             break;
@@ -925,6 +1049,15 @@ void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void
     ;
 
     // pokud user logged in, tak pokracovat, pokud ne, tak poslat USER, PASS
+}
+
+void bufevent_read_cb_data(struct bufferevent *buf_event, short events, void *ptr_arg) {
+    
+}
+
+void bufevent_write_cb_data(struct bufferevent *buf_event, short events, void *ptr_arg) {
+    // pokud chceme poslat soubor tak    read cb_c => write cb_c => write cb_d
+    // pokud chceme prijmout souvor, tak read cb_c => write cb_c => read cb_d
 }
 
 // struct event, event_base, bufferevent, evbuffer
