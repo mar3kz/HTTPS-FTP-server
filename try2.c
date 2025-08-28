@@ -58,72 +58,76 @@ void change_value(struct Try2 *p) {
     p = &x;
 }
 
-char **metadata_command(char *command) {
-    // pro PORT = 7 jednotlivych slov, pro PORT to neni potreba, protoze vime, ze tato funkce je primo pro PORT => 6 slov
-    // PORT h1,h2,h3,h4,p1,p2
-    // PORT 12,255,64,38,10,20\r\n
-    // 25, 26
-
-    char **array = (char **)calloc(6, sizeof(char *));
-    int i_arr = 0;
-    int j_arr = 0;
-    // [i][j]
-
-    for (int i = 0; i < 6; i++) {
-        array[i] = (char *)malloc(4); // max IP adresa muze byt 255 => 3 chars + 1 pro \0
-        memset(array[i], 0, 4); // automaticke NULL terminated strings
-        printf("\ns");
-    }
-
-    char *st_space = strstr(command, " "); // kde a co
-    if (st_space == NULL) {
-        fprintf(stderr, "strstr nenaslo ' '");
-        exit(EXIT_FAILURE);
-    }
-
-    char *st_separator = strstr(command, ","); // kde a co
-    if (st_space == NULL) {
-        fprintf(stderr, "strstr nenaslo ,");
-        exit(EXIT_FAILURE);
-    }
-
-    int i_space = (int)(st_space - command);
-    int i_separator = (int)(st_separator - command);
-
-    for (int second_end = i_separator, i = i_space + 1; i < strlen(command) + 1; i++) { // musime specifikovat typ pouze jednou
-        if (i < second_end) {
-            array[i_arr][j_arr++] = command[i];
-
-            printf("\nhalo: %c", array[i_arr][j_arr]);
-        }
-        else {
-            char *next_separator = (strstr(command + i + 1, ",") == NULL) ? strstr(command + i + 1, "\r") : strstr(command + i + 1, ","); // kde a co
-            if (next_separator == NULL && i < 15) { // cca 15 muze byt minimalni pocet, kde muze opravdu nastat chyba
-                fprintf(stderr, "strstr nenaslo , ani CR");
-                exit(EXIT_FAILURE);
-            }
-            else if (next_separator == NULL && i > 15) {
-                break;
-            }
-            second_end = (int)(next_separator - command);
-            printf("\nsecond_end: %d, %c", second_end, command + 1 + i);
-            i_arr++;
-            j_arr = 0;
-        }
-    }
-    return array;
+void change_var() {
+    MAX = 10;
 }
 
-short int return_port(char **metadata_command) {
-    short int port;
-    unsigned char *port_array = malloc(sizeof(unsigned char ) * 2);
-    for (int i = 4, i_port_arr = 0; i < 6; i++) {
-        port_array[i_port_arr++] = atoi(metadata_command[i]); // ASCII to Int
-    }
-    memcpy(&port, port_array, sizeof(unsigned char ) * 2); // takhle se kopiruji data celeho array do jedne promenne
+// char **metadata_command(char *command) {
+//     // pro PORT = 7 jednotlivych slov, pro PORT to neni potreba, protoze vime, ze tato funkce je primo pro PORT => 6 slov
+//     // PORT h1,h2,h3,h4,p1,p2
+//     // PORT 12,255,64,38,10,20\r\n
+//     // 25, 26
 
-    return htons(port); // aby uz to bylo na network 
-}
+//     char **array = (char **)calloc(6, sizeof(char *));
+//     int i_arr = 0;
+//     int j_arr = 0;
+//     // [i][j]
+
+//     for (int i = 0; i < 6; i++) {
+//         array[i] = (char *)malloc(4); // max IP adresa muze byt 255 => 3 chars + 1 pro \0
+//         memset(array[i], 0, 4); // automaticke NULL terminated strings
+//         printf("\ns");
+//     }
+
+//     char *st_space = strstr(command, " "); // kde a co
+//     if (st_space == NULL) {
+//         fprintf(stderr, "strstr nenaslo ' '");
+//         exit(EXIT_FAILURE);
+//     }
+
+//     char *st_separator = strstr(command, ","); // kde a co
+//     if (st_space == NULL) {
+//         fprintf(stderr, "strstr nenaslo ,");
+//         exit(EXIT_FAILURE);
+//     }
+
+//     int i_space = (int)(st_space - command);
+//     int i_separator = (int)(st_separator - command);
+
+//     for (int second_end = i_separator, i = i_space + 1; i < strlen(command) + 1; i++) { // musime specifikovat typ pouze jednou
+//         if (i < second_end) {
+//             array[i_arr][j_arr++] = command[i];
+
+//             printf("\nhalo: %c", array[i_arr][j_arr]);
+//         }
+//         else {
+//             char *next_separator = (strstr(command + i + 1, ",") == NULL) ? strstr(command + i + 1, "\r") : strstr(command + i + 1, ","); // kde a co
+//             if (next_separator == NULL && i < 15) { // cca 15 muze byt minimalni pocet, kde muze opravdu nastat chyba
+//                 fprintf(stderr, "strstr nenaslo , ani CR");
+//                 exit(EXIT_FAILURE);
+//             }
+//             else if (next_separator == NULL && i > 15) {
+//                 break;
+//             }
+//             second_end = (int)(next_separator - command);
+//             printf("\nsecond_end: %d, %c", second_end, command + 1 + i);
+//             i_arr++;
+//             j_arr = 0;
+//         }
+//     }
+//     return array;
+// }
+
+// short int return_port(char **metadata_command) {
+//     short int port;
+//     unsigned char *port_array = malloc(sizeof(unsigned char ) * 2);
+//     for (int i = 4, i_port_arr = 0; i < 6; i++) {
+//         port_array[i_port_arr++] = atoi(metadata_command[i]); // ASCII to Int
+//     }
+//     memcpy(&port, port_array, sizeof(unsigned char ) * 2); // takhle se kopiruji data celeho array do jedne promenne
+
+//     return htons(port); // aby uz to bylo na network 
+// }
 
 int main()
 {
@@ -220,27 +224,34 @@ int main()
         printf("no");
     }
 
-    char **array = metadata_command("PORT 0,0,0,0,0,0\r\n");
-    printf("zacatek");
-    fflush(stdout);
-    printf("\n\nzacatek%s\n", array[0]);
-    printf("%s\n", array[1]);
-    printf("%s\n", array[2]);
-    printf("%s\n", array[3]);
-    printf("%s\n", array[4]);
-    printf("%s\n", array[5]);
-    fflush(stdout);
+    // char **array = metadata_command("PORT 0,0,0,0,0,0\r\n");
+    // printf("zacatek");
+    // fflush(stdout);
+    // printf("\n\nzacatek%s\n", array[0]);
+    // printf("%s\n", array[1]);
+    // printf("%s\n", array[2]);
+    // printf("%s\n", array[3]);
+    // printf("%s\n", array[4]);
+    // printf("%s\n", array[5]);
+    // fflush(stdout);
 
-    printf("AVE CHRISTUS REX!");
-    for (int i = 0; i < 6; i++) {
-        printf("AVE CHRISTUS REX!");
-        printf("tady: %s", array[i]);
-    }
-    fflush(stdout);
+    // printf("AVE CHRISTUS REX!");
+    // for (int i = 0; i < 6; i++) {
+    //     printf("AVE CHRISTUS REX!");
+    //     printf("tady: %s", array[i]);
+    // }
+    // fflush(stdout);
 
 
 
-    printf("\n\n\n%d", return_port(array));
+    // printf("\n\n\n%d", return_port(array));
+
+    printf("\nMAX: %d", MAX);
+    change_var();
+    printf("\nMAX: %d", MAX);
+
+
+
 
     // if ( strstr("tigujtg\r", "\r") == NULL) {
     //     printf("\nneni");
