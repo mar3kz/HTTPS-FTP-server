@@ -52,6 +52,7 @@ gcc -I/opt/openssl/include -L/opt/openssl/lib \
 #define RESPONSELEN 180 + lengthfile
 size_t BUFFER_SIZE = 250;
 pthread_t MAX_THREADS = 5;
+int QUEUE_MESSAGE_LEN = 256;
 int CONNECTION = 0;
 #define CONTROL_PORT 2100
 #define DATA_PORT 2000
@@ -235,6 +236,10 @@ https://github.com/openssl/openssl/blob/53e5071f3402ef0ae52f583154574ddd5aa8d3d7
 */
 
 // SSL_ST_MASK = 4095 (na dec) - 0FFF
+
+int reset_queue_message_len() { // protoze je to globalni promenna, tak je ulozena na datove sekci => po skonceni funkce nezmizi => neni na stacku
+    QUEUE_MESSAGE_LEN = 256;
+}
 
 void cb(SSL *CONNECTION, int where, int ret) {
     // SSL_ST = SSL State, ale pro callback funkci toto neni!!
@@ -782,11 +787,14 @@ int partial_login_lookup(char *text, int username_password) {
     return 1;
 }
 
-void execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
+void execute_commands(char *command) {
     // tato queue je zpusob komunikace mezi control a data funkcemi, budeme posilat jakekoliv zpravy s mensi priority hodnotou nez posilani zprav s paths, ktere mame poslat, aby v queue byly na uplnem vrcholu a aby se nemuselo cekat nez se odesle zprava, protoze path > zprava (priorita)
     // zprava = 30, path = 31
 
-    mqd_t mq_control_r_w = mq_open("/control_queue", O_RDWR);
+    mqd_t control_queue = mq_open("/control_queue", O_RDWR);
+    mqd_t data_queue = mq_open("/control_data", O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID | S_ISGID, NULL); // 6777
+
+    if (control_queue == -1 || control)
 
     const char msg4[] = "501 - Syntax error in parameters or arguments";
     // const char msg2[] = "426 - Connection closed; transfer aborted";
@@ -799,13 +807,13 @@ void execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
         const char msg2[] = "430 - Invalid username or password (usernme)";
 
         if (result == 0) { // OK
-            if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) { // 31 = nejvetsi priorita
+            if ( mq_send(control_queue, msg1, strlen(msg1) + 1, 30) == -1) { // 31 = nejvetsi priorita
                 perror("mq_send() selhalo - execute_commands - USER - msg1");
                 exit(EXIT_FAILURE);
             }
         }
         else { // nenaslo se
-            if ( mq_send(mq_control_data, msg2, strlen(msg2) + 1, 30) == - 1) { // 31 = nejvetsi priorita
+            if ( mq_send(control_queue, msg2, strlen(msg2) + 1, 30) == - 1) { // 31 = nejvetsi priorita
                 perror("mq_send() selhal - execute_commands - USER - msg2");
                 exit(EXIT_FAILURE);
             }
@@ -819,22 +827,22 @@ void execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
         const char msg2[] = "430 - Invalid username or password (password)";
         
         if (result == 0) {
-            if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) {
+            if ( mq_send(control_queue, msg1, strlen(msg1) + 1, 30) == -1) {
                 perror("mq_send() selhal - execute commands - PASS - msg1");
                 exit(EXIT_FAILURE);
             }
         }
         else {
-            if ( mq_send(mq_control_data, msg2, strlen(msg2) + 1, 30) == -1) {
+            if ( mq_send(control_queue, msg2, strlen(msg2) + 1, 30) == -1) {
                 perror("mq_send() selhal - execute commands - PASS - msg2");
                 exit(EXIT_FAILURE);
             }
         }
     }
-    if (strstr("NOOP", command) != NULL) {
+    else if (strstr("NOOP", command) != NULL) {
         const char msg1[] = "200 - command okay";
         
-        if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) {
+        if ( mq_send(control_queue, msg1, strlen(msg1) + 1, 30) == -1) {
             perror("mq_send() selhal - execute commands - NOOP - msg1");
             exit(EXIT_FAILURE);
         }
@@ -845,14 +853,14 @@ void execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
         const char msg2[] = "200 - command okay (stayed same)";
         
         if (strstr("Image", command) != NULL) {
-            if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) {
+            if ( mq_send(control_queue, msg1, strlen(msg1) + 1, 30) == -1) {
                 perror("mq_send() selhal - execute commands - TYPE - msg1");
                 exit(EXIT_FAILURE);
             }
             data_representation = IMAGE;
         }
         else {
-            if ( mq_send(mq_control_data, msg1, strlen(msg2) + 1, 30) == -1) {
+            if ( mq_send(control_queue, msg1, strlen(msg2) + 1, 30) == -1) {
                 perror("mq_send() selhal - execute commands - TYPE - msg2");
                 exit(EXIT_FAILURE);
             }
@@ -862,13 +870,13 @@ void execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
     else if (strstr("QUIT", command) != NULL) {
         const char msg1[] = "221 - Service closing control connection. Logged out if appropriate";
 
-        if ( mq_send(mq_control_data, msg1, strlen(msg) + 1, 30) == -1) {
+        if ( mq_send(control_queue, msg1, strlen(msg) + 1, 30) == -1) {
             perror("mq_send() selhal - execute commands - QUIT - msg1");
             exit(EXIT_FAILURE);
         }
         current_user = NULL;
     }
-    else if (strstr("RETR", command) != NULL) {
+    else if (strstr("RETR", command) != NULL) { // CONTROL + DATA
 
         const char msg1[] = "250 - Requested file action was okay, completed)";
         const char msg2[] = "530 - Not Logged in - can't send file";
@@ -885,29 +893,36 @@ void execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
             }
             path[path_i] == '\0';
 
-            if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) { // file se posle
+            // CONTROL
+            if ( mq_send(control_queue, msg1, strlen(msg1) + 1, 30) == -1) { // file se posle
                 perror("mq_send() selhal - execute commands - RETR - msg1");
+                exit(EXIT_FAILURE);
+            }
+
+            // DATA
+            if ( mq_send(data_queue, path, strlen(path) + 1) == -1) {
+                perror("mq_send() selhal - execute commands - STOR - msg1");
                 exit(EXIT_FAILURE);
             }
         }
         else if (!ftp_user_info.user_loggedin) {
-            if ( mq_send(mq_control_data, msg2, strlen(msg2) + 1, 30) == -1) { // not logged in
+            if ( mq_send(control_queue, msg2, strlen(msg2) + 1, 30) == -1) { // not logged in
                 perror("mq_send() selhal - execute commands - RETR - msg2");
                 exit(EXIT_FAILURE);
             }
         }
         else {
-            if ( mq_send(mq_control_data, msg3, strlen(msg3) + 1, 30) == -1) { // neni otevrena data connection
+            if ( mq_send(control_queue, msg3, strlen(msg3) + 1, 30) == -1) { // neni otevrena data connection
                 perror("mq_send() selhal - execute commands - RETR - msg3");
                 exit(EXIT_FAILURE);
             }
         }
         // send_file_bypath();
     }
-    else if (strstr("STOR", command) != NULL) {
+    else if (strstr("STOR", command) != NULL) { // CONTROL + DATA
         const char msg1 = "200 - Command okay";
         const char msg2 = "532 - Need account for storing files";
-        const char msg3 = "501 - Syntax error in parameters or arguments";
+        // const char msg3 = "501 - Syntax error in parameters or arguments";
 
         if (ftp_user_info.user_loggedin) {
             char *st_space = strstr(" ", command);
@@ -920,8 +935,15 @@ void execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
             }
             path[path_i] == '\0';
 
+            // CONTROL
             // ftp interpreter u klienta musi zadat path a na data connection se posle ten pozadovany soubor, my posleme zpravu s path, kde se file ma ulozit
-            if ( mq_send(mq_control_data, msg1, strlen(msg1) + 1, 30) == -1) {
+            if ( mq_send(control_queue, msg1, strlen(msg1) + 1, 30) == -1) {
+                perror("mq_send() selhal - execute commands - STOR - msg1");
+                exit(EXIT_FAILURE);
+            }
+
+            // DATA
+            if ( mq_send(data_queue, path, strlen(path) + 1) == -1) {
                 perror("mq_send() selhal - execute commands - STOR - msg1");
                 exit(EXIT_FAILURE);
             }
@@ -929,16 +951,12 @@ void execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
             // mqueue pro data connection needed - AVE CHRISTUS REX!                     
         }
         else if (!ftp_user_info.user_loggedin) {
-            if ( mq_send(mq_control_data, msg2, strlen(msg2) + 1, 30) == -1) {
+            if ( mq_send(control_queue, msg2, strlen(msg2) + 1, 30) == -1) {
                 perror("mq_send() selhal - execute commands - STOR - msg2");
                 exit(EXIT_FAILURE);
             }
         }
-        
-
         // get_file from data and save it
-
-        
     }
     else if (strstr("PORT", command) != NULL) {
         // send this information
@@ -989,65 +1007,115 @@ void execute_commands(char *command, int comsocket, struct Ftp_Sockets *ptr) {
     }
 }
 
+char *read_contents_ftp(char *path) {
+    int fd = open(path, O_RDONLY);
+
+    // pokud bychom meli FILE *, tak musime pouzit fileno() pro ziskani file descriptoru
+    struct stat info;
+}
 
 // nemusime implementovat event_cb, protoze kazda funkce dostava short events, kde muzeme treba zjistit, jestli peer disconectnul socket
 void bufevent_read_cb_control(struct bufferevent *buf_event, short events, void *ptr_arg) {
     // v bufferu muzou byt vice TCP segmentu (data z TCP segmentu)
-    struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)ptr_arg;
+   
+   reset_queue_message_len();
+   char *data = (char *)malloc(QUEUE_MESSAGE_LEN);
 
-    unsigned char *command = (unsigned char *)malloc(256);
-    ssize_t bytes_received = 0;
-    size_t bytes_received_total;
+   size_t bytes_received, bytes_total;
+   for ( ; ; ) {
+    bytes_received = bufferevent_read(buf_event, data + bytes_total, QUEUE_MESSAGE_LEN - bytes_total);
 
-    // UDP dela to, ze pokud supplied buffer je mensi nez samotna zprava, tak se naplni buffer a potom se zbytek dat orizne, zatimco TCP toto nedela a data cekaji v TCP stack bufferu
-    // ftp commands jsou ukonceny CRLF jako v Telnetu (\r\n)
-    char *possible_crlf;
-    while ( (bytes_received = recv(ftp_sockets_p->control_com, command + bytes_received_total, 256 - bytes_received_total, 0)) != 0) { // return value 0 = EOF/ 0 bytes prislo
-        if (bytes_received == -1) {
-            perror("recv() selhal - receive_code_data");
+    // protoze bufferevent_write pouziva read/write, tak muzeme dostat 0 Bytes, protoze bud se peer disocnectnul nebo jsme pouze dostali 0 Bytes, proto musime kontrolovat i flags
+    if (bytes_received == 0 && ((BEV_EVENT_EOF & events) = BEV_EVENT_EOF) || ((BEV_EVENT_READING & events) == BEV_EVENT_READING) || ((BEV_EVENT_ERROR & events) == BEV_EVENT_ERROR)) {
+        // pokud dostaneme 0 Bytes a zaroven aspon jeden error, tak ukoncince program, protoze se naskytla chyba
+        exit(EXIT_FAILURE);
+    }
+    bytes_total += bytes_received;
+
+    if (QUEUE_MESSAGE_LEN - bytes_total == 0 && !strstr("\r\n", data)) { // nemuze to byt pod 0, protoze vzdy chceme 256 - x pocet Bytes, strstr(substring, string)
+        char *data_temp = (char *)realloc(data, QUEUE_MESSAGE_LEN + QUEUE_MESSAGE_LEN); // 256 + 256 => 256 + 256 + 256 ...
+        // copies data into into data_temp from data
+        // pokud realloc vrati stejny pointer (zvetsi puvodni pointer), tak se jenom vrati ten stary pointer, pokud realloc novy pointer, je to protoze nebylo contiguous space Bytes vedle sebe, zkopiruje Bytes do noveho pointeru a stary dealokuje automaticky => toto znamena, ze z char *ptr na nejakou memory oblast se stal jenom pointer, kde v memory je 8 Bytes dedicated k ulozeni prave toho pointeru na stack procesu (misto hodnoty, je ta promenna prazdna) a potom udelame data = temp_data, kde tu promennou zase naplnime
+
+        if (data == NULL) {
+            perror("realloc() selhal - bufevent_read_cb_control");
             exit(EXIT_FAILURE);
         }
-        else if (possible_crlf = strstr("\r\n", command)) { // \r\n, takhle se zakoncuji FTP prikazy \r == 13 dec, \n == 10 dec
-            int crlf_i = (int)(possible_crlf - command); // pokud by byly vice commands, tak se to muze udelat pomoci MSG_PEEK, zkusit nejakou delku a potom opravdu to precist apod.
-            execute_commands(command, ftp_sockets_p);
-        }
-        bytes_received_total += bytes_received;
+        data = data_temp;
     }
+    else {
+        char *crlf_end = strstr("\n", data);
+        int crlf_end_i = (int)crlf_end-data;
+
+        data[crlf_end_i + 1] = '\0'; // funkce ocekavaji \r\n konec commandu
+
+        char *text = (char *)malloc(crlf_end_i);
+        strcpy(text, data); // strcpy kopiruje string az do \0 (konci prave na \0)
+
+        execute_commands(text);
+        break;
+    }
+   }
+    // UDP dela to, ze pokud supplied buffer je mensi nez samotna zprava, tak se naplni buffer a potom se zbytek dat orizne, zatimco TCP toto nedela a data cekaji v TCP stack bufferu
+    // ftp commands jsou ukonceny CRLF jako v Telnetu (\r\n)
 }
 
 void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void *ptr_arg) {
     // control/data connection
     // based on that either send file or send an ftp code
-    struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)ptr_arg;
+    // write vrati 0 jenom pri tom pokud je zprava 0 (pokud je to pry POSIX system, tak by to nemelo vratit 0, mozna pokud by size zpravy by bylo vetsi SSIZE_MAX => 32 767 => getconf SSIZE_MAX)
 
     switch(ftp_user_info.user_loggedin) {
         case 0: // false
             if (ftp_user_info.username == NULL) {
                 char *buf = "Name (!AVE CHRISTUX REX FTP SERVER!) Name: ";
-                if (bufferevent_write(buf_event, buf, strlen(buf) + 1) == -1) { // da data do output bufferu (struct evbuffer) struct bufferevent
-                    perror("bufferevent_write() selhal - write_control_cb - username");
-                    exit(EXIT_FAILURE);
+
+                if (strlen(buf) > 0) { // protoze bufferevent_write() vraci 0 pro write, tak je to jenom takova ochrana
+                    if (bufferevent_write(buf_event, buf, strlen(buf) + 1) == -1) { // da data do output bufferu (struct evbuffer) struct bufferevent
+                        perror("bufferevent_write() selhal - write_control_cb - username");
+                        exit(EXIT_FAILURE);
+                    }
                 }
             }
             else if (ftp_user_info.password == NULL) {
                 char *buf = "Password: ";
-                if ( bufferevent_write(buf_event, buf, strlen(buf) + 1) == -1) {
-                    perror("bufferevent_write() selhal - write_control_cb - password");
-                    exit(EXIT_FAILURE);
+                
+                if (strlen(buf) > 0) {
+                    if ( bufferevent_write(buf_event, buf, strlen(buf) + 1) == -1) {
+                        perror("bufferevent_write() selhal - write_control_cb - password");
+                        exit(EXIT_FAILURE);
+                    }
                 }
             }
             break;
         case 1: // true
+            mqd_t control_queue = mq_open("/control_queue", O_RDONLY); // otevirani queue pro odesilani FTP responses
+
+            if (control_queue == -1) {
+                perror("mq_open() selhal - bufevent_write_cb_control");
+                exit(EXIT_FAILURE);
+            }
+
+            char *received_message = (char *)malloc(QUEUE_MESSAGE_LEN);
+            memset(received_message, 0, QUEUE_MESSAGE_LEN); // automaticky NULL terminated => uz i vime, kolik cca Bytes budeme psat
+
+            if ( mq_receive(control_queue, QUEUE_MESSAGE_LEN) == -1) {
+                perror("mq_receive() selhal - bufevent_write_cb_control");
+                exit(EXIT_FAILURE);
+            }
+            else if (strlen(received_message) > 0) {
+                if ( bufferevent_write(buf_event, received_message, strlen(received_message) + 1) == -1) {
+                    perror("bufferevent_write() selhal - write_control_cb - loggedin - case 1");
+                    exit(EXIT_FAILURE);
+                }
+            }
             // poslat codes z mqueue => z execute commands
-            // true
             break;
         default:
             fprintf(stderr, "spatna hodnota u user_loggedin - bufevent_write_cb_control");
             exit(EXIT_FAILURE);
             break;
     }
-    ;
-
     // pokud user logged in, tak pokracovat, pokud ne, tak poslat USER, PASS
 }
 
@@ -1058,6 +1126,21 @@ void bufevent_read_cb_data(struct bufferevent *buf_event, short events, void *pt
 void bufevent_write_cb_data(struct bufferevent *buf_event, short events, void *ptr_arg) {
     // pokud chceme poslat soubor tak    read cb_c => write cb_c => write cb_d
     // pokud chceme prijmout souvor, tak read cb_c => write cb_c => read cb_d
+    mqd_t data_queue = mq_open("/data_queue", O_RDONLY);
+
+    if (data_queue == -1) {
+        perror("mq_open() selhal - bufevent_write_cb_data");
+        exit(EXIT_FAILURE);
+        // AVE CHRISTUS REX!
+    }
+
+    char *path_to_send = (char *)malloc(QUEUE_MESSAGE_LEN);
+    if ( mq_receive(data_queue, path_to_send, QUEUE_MESSAGE_LEN, NULL) == -1) {
+        perror("mq_receive() selhal - bufevent_write_cb_data");
+        exit(EXIT_FAILURE);
+    }
+
+
 }
 
 // struct event, event_base, bufferevent, evbuffer
