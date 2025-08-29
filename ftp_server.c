@@ -53,6 +53,7 @@ gcc -I/opt/openssl/include -L/opt/openssl/lib \
 size_t BUFFER_SIZE = 250;
 pthread_t MAX_THREADS = 5;
 int QUEUE_MESSAGE_LEN = 256;
+int BUFEVENT_DATA_LEN = 512;
 int CONNECTION = 0;
 #define CONTROL_PORT 2100
 #define DATA_PORT 2000
@@ -239,6 +240,10 @@ https://github.com/openssl/openssl/blob/53e5071f3402ef0ae52f583154574ddd5aa8d3d7
 
 int reset_queue_message_len() { // protoze je to globalni promenna, tak je ulozena na datove sekci => po skonceni funkce nezmizi => neni na stacku
     QUEUE_MESSAGE_LEN = 256;
+}
+
+int reset_bufevent_data_len() {
+    BUFEVENT_DATA_LEN = 512;
 }
 
 void cb(SSL *CONNECTION, int where, int ret) {
@@ -1012,28 +1017,49 @@ char *read_contents_ftp(char *path) {
 
     // pokud bychom meli FILE *, tak musime pouzit fileno() pro ziskani file descriptoru
     struct stat info;
+
+    // stat/fstat/lstat
+    if (stat(path, &info) == -1) {
+        perror("stat() selhal - read_contents_ftp");
+        exit(EXIT_FAILURE);
+    }
+
+    size_t len_file = info.st_size;
+    char *data_from_file = (char *)malloc(len_file + 1); // file s jednim znakem => 2 Bytes => char + \n => proto + 1 pro => 3 Bytes
+
+    ssize_t bytes_read;
+    size_t total_bytes = 0;
+    while ( bytes_read = read(fd, data_from_file + total_bytes, len_file - total_bytes) != len_file) {
+        if ( bytes_read == -1) {
+            perror("read() selhal - read_contents_ftp");
+            exit(EXIT_FAILURE);
+        }
+        total_bytes += bytes_read;
+    }
+    data_from_file[total_bytes] = '\0';
+    return data_from_file;
 }
 
 // nemusime implementovat event_cb, protoze kazda funkce dostava short events, kde muzeme treba zjistit, jestli peer disconectnul socket
 void bufevent_read_cb_control(struct bufferevent *buf_event, short events, void *ptr_arg) {
     // v bufferu muzou byt vice TCP segmentu (data z TCP segmentu)
    
-   reset_queue_message_len();
-   char *data = (char *)malloc(QUEUE_MESSAGE_LEN);
+   reset_bufevent_data_len();
+   char *data = (char *)malloc(BUFEVENT_DATA_LEN);
 
    size_t bytes_received, bytes_total;
    for ( ; ; ) {
-    bytes_received = bufferevent_read(buf_event, data + bytes_total, QUEUE_MESSAGE_LEN - bytes_total);
+    bytes_received = bufferevent_read(buf_event, data + bytes_total, BUFEVENT_DATA_LEN - bytes_total);
 
     // protoze bufferevent_write pouziva read/write, tak muzeme dostat 0 Bytes, protoze bud se peer disocnectnul nebo jsme pouze dostali 0 Bytes, proto musime kontrolovat i flags
-    if (bytes_received == 0 && ((BEV_EVENT_EOF & events) = BEV_EVENT_EOF) || ((BEV_EVENT_READING & events) == BEV_EVENT_READING) || ((BEV_EVENT_ERROR & events) == BEV_EVENT_ERROR)) {
+    if (bytes_received == 0 && ((BEV_EVENT_EOF & events) = BEV_EVENT_EOF) || ((BEV_EVENT_ERROR & events) == BEV_EVENT_ERROR)) {
         // pokud dostaneme 0 Bytes a zaroven aspon jeden error, tak ukoncince program, protoze se naskytla chyba
         exit(EXIT_FAILURE);
     }
     bytes_total += bytes_received;
 
-    if (QUEUE_MESSAGE_LEN - bytes_total == 0 && !strstr("\r\n", data)) { // nemuze to byt pod 0, protoze vzdy chceme 256 - x pocet Bytes, strstr(substring, string)
-        char *data_temp = (char *)realloc(data, QUEUE_MESSAGE_LEN + QUEUE_MESSAGE_LEN); // 256 + 256 => 256 + 256 + 256 ...
+    if (BUFEVENT_DATA_LEN - bytes_total == 0 && !strstr("\r\n", data)) { // nemuze to byt pod 0, protoze vzdy chceme 256 - x pocet Bytes, strstr(substring, string)
+        char *data_temp = (char *)realloc(data, BUFEVENT_DATA_LEN + BUFEVENT_DATA_LEN); // 256 + 256 => 256 + 256 + 256 ...
         // copies data into into data_temp from data
         // pokud realloc vrati stejny pointer (zvetsi puvodni pointer), tak se jenom vrati ten stary pointer, pokud realloc novy pointer, je to protoze nebylo contiguous space Bytes vedle sebe, zkopiruje Bytes do noveho pointeru a stary dealokuje automaticky => toto znamena, ze z char *ptr na nejakou memory oblast se stal jenom pointer, kde v memory je 8 Bytes dedicated k ulozeni prave toho pointeru na stack procesu (misto hodnoty, je ta promenna prazdna) a potom udelame data = temp_data, kde tu promennou zase naplnime
 
@@ -1098,8 +1124,7 @@ void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void
 
             char *received_message = (char *)malloc(QUEUE_MESSAGE_LEN);
             memset(received_message, 0, QUEUE_MESSAGE_LEN); // automaticky NULL terminated => uz i vime, kolik cca Bytes budeme psat
-
-            if ( mq_receive(control_queue, QUEUE_MESSAGE_LEN) == -1) {
+            if ( mq_receive(control_queue, received_message, QUEUE_MESSAGE_LEN, NULL) == -1) {
                 perror("mq_receive() selhal - bufevent_write_cb_control");
                 exit(EXIT_FAILURE);
             }
@@ -1119,8 +1144,68 @@ void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void
     // pokud user logged in, tak pokracovat, pokud ne, tak poslat USER, PASS
 }
 
+int save_file(char *path, char *data_received) {
+    int fd = open(path, O_CREAT | O_APPEND, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID); // 4777
+
+    int len_of_data_received = strlen(data_received);
+
+    char *data_to_save = (char *)malloc(path_len);
+    if (data_to_save == NULL) {
+        perror("malloc() selhal - save_file");
+        exit(EXIT_FAILURE);
+    }
+
+    ssize_t total_bytes = 0;
+    size_t bytes_written;
+
+
+    if (len_of_data_received > 0) {
+        while ( (bytes_written = write(fd, data_to_save + total_bytes, len_of_data_received - total_bytes)) != len_of_data_received) {
+            if (bytes_written == -1) {
+                perror("write() selhal - save_file");
+                exit(EXIT_FAILURE);
+            }
+
+            total_bytes += bytes_written;
+        }
+    }
+
+    return 0;
+}
+
 void bufevent_read_cb_data(struct bufferevent *buf_event, short events, void *ptr_arg) {
+    mqd_t data_queue = mq_open("/data_queue", O_RDONLY);
+
+    if (data_queue == -1) {
+        perror("mq_open() selhal - bufevent_read_cb_data");
+        exit(EXIT_FAILURE);
+    }
+
+    char *path_to_receive = (char *)malloc(QUEUE_MESSAGE_LEN);
+    if ( mq_receive(data_queue, path_to_receive, QUEUE_MESSAGE_LEN, NULL) == -1) {
+        perror("mq_receive() selhal - bufevent_read_cb_data");
+        exit(EXIT_FAILURE);
+    }
     
+    char *data = (char *)malloc(BUFEVENT_DATA_LEN);
+    ssize_t bytes_read;
+    size_t total_bytes = 0;
+    
+    while (1) { // pokud 0 => bud 0 dat nebo EOF, -1 = error 
+        bytes_read = (bufferevent_read(bufferevent, data + total_bytes, BUFEVENT_DATA_LEN - total_bytes));
+
+        if (bytes_read == 0 && ((BEV_EVENT_EOF & events) == BEV_EVENT_EOF) || ((BEV_EVENT_ERROR & events) == BEV_EVENT_ERROR)) {
+            perror("bufferevent_read() selhal - bufevent_read_cb_data");
+            exit(EXIT_FAILURE);
+        }
+        else if (bytes_read == 0) {
+            total_bytes += bytes_read;
+            break;
+        }
+        total_bytes += bytes_read;
+    }
+
+    save_file(path_to_receive, data); // tato funkce bud udela co ma, nebo skonci program => nemusime kontrolovat pomoci if statement 
 }
 
 void bufevent_write_cb_data(struct bufferevent *buf_event, short events, void *ptr_arg) {
@@ -1139,8 +1224,20 @@ void bufevent_write_cb_data(struct bufferevent *buf_event, short events, void *p
         perror("mq_receive() selhal - bufevent_write_cb_data");
         exit(EXIT_FAILURE);
     }
+    // ted mame path AVE CHRISTUS REX!!
 
+    struct stat path_len;
+    if (stat(path_to_send, &path_len) == -1) {
+        perror("stat() selhal - bufevent_write_cb_data");
+        exit(EXIT_FAILURE);
+    }
 
+    char *data_to_send = read_contents_ftp(path_to_send);
+
+    if ( bufferevent_write(buf_event, data_to_send, path_len + 1) == -1) { // + 1 pro \0, protoze 1 char file => @ Bytes => 3 Bytes pro \0
+        perror("bufferevent_write() selhal - bufevent_write_cb_data");
+        exit(EXIT_FAILURE);
+    }
 }
 
 // struct event, event_base, bufferevent, evbuffer
