@@ -25,6 +25,7 @@
 #include <mqueue.h> // pro komunikaci mezi procesy/threads
 #include <stdint.h> // uint32_t
 #include <mqueue.h> // komunikace mezi jeden thread
+#include <event2/thread>
 // event2, protoze to je novejsi verze, kdybych tam dal jenom event, tak
 // #include <event.h>
 //#include <openssl/ssl/ssl_local.h>
@@ -123,7 +124,8 @@ typedef struct Ftp_User_Info {
     int data_connection_port;
 }
 struct Ftp_User_Info ftp_user_info = {.username = NULL, .password = NULL, .user_loggedin = 0};
-
+struct event_base evbase_data;
+struct bufferevent bufevent_data;
 
 
 // struct Handling_response_struct {
@@ -792,7 +794,7 @@ int partial_login_lookup(char *text, int username_password) {
     return 1;
 }
 
-void execute_commands(char *command) {
+void execute_commands(char *command, struct bufferevent bufevent_control) {
     // tato queue je zpusob komunikace mezi control a data funkcemi, budeme posilat jakekoliv zpravy s mensi priority hodnotou nez posilani zprav s paths, ktere mame poslat, aby v queue byly na uplnem vrcholu a aby se nemuselo cekat nez se odesle zprava, protoze path > zprava (priorita)
     // zprava = 30, path = 31
 
@@ -952,7 +954,6 @@ void execute_commands(char *command) {
                 perror("mq_send() selhal - execute commands - STOR - msg1");
                 exit(EXIT_FAILURE);
             }
-
             // mqueue pro data connection needed - AVE CHRISTUS REX!                     
         }
         else if (!ftp_user_info.user_loggedin) {
@@ -965,15 +966,40 @@ void execute_commands(char *command) {
     }
     else if (strstr("PORT", command) != NULL) {
         // send this information
-        char **array = metadata_command(command, ptr);
-        // x1,x2,x3,x4,p1,p2
 
-        short int port = return_port(array);
-        uint32_t address = return_address(array);
-        int ftp_data_com = make_port_connection(address, port, ptr);
+        if (!ftp_user_info.user_loggedin) {
+            char **array = metadata_command(command, ptr);
+            // x1,x2,x3,x4,p1,p2
 
-        ftp_user_info.connection_sd = ftp_data_com;
-        ftp_user_info.connection_port = port;
+            short int port = return_port(array);
+            uint32_t address = return_address(array);
+            int ftp_data_com = make_port_connection(address, port, ptr);
+
+            ftp_user_info.connection_sd = ftp_data_com;
+            ftp_user_info.connection_port = port;
+
+            evbase_data = event_base_new(); // event_base nepotrebujeme, protoze event_base se pouziva na socket/buffer, kdyz je ready na read/write apod. ale bufferevent uz rovnou vola callbacky kdyz se prectou/zapisou data
+
+            // protoze libevent drzi lock na vsechny buffereventy (mutex), tak pokud bychom chteli precist neco, na cem je lock, tak by ten thread cekal na to, nez se ten lock da pryc, to by se cekalo donekonecna => deadlock => proto BEV_OPT_UNLOCK_CALLBACKS
+            bufevent_data = bufferevent_socket_new(evbase_data, ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS);
+
+            void (*bufevent_write_data)(struct bufferevent *bufevent_data, short events, void *ptr_arg) = bufevent_write_cb_data; // v oficialni dokumentaci je misto void *ptr_arg void *ctx (context)
+            void (*bufevent_read_data)(struct bufferevent *bufevent_data, short events, void *ptr_arg) = bufevent_read_data;
+            bufferevent_setcb(bufevent_data, bufevent_read_cb_data, bufevent_write_cb_data, NULL, NULL);
+            bufferevent_enable(bufevent_data, EV_READ | WRITE); // nastavi eventy pro buffer event, write callback se zavola jenom po tom, co user zapise ty data
+
+            char msg1[] = "200 - command okay";
+            if (mq_send(control_queue, msg1, strlen(msg1) + 1, NULL) == -1) {
+                perror("mq_send() selhal - execute_commands");
+                exit(EXIT_FAILURE);
+            }
+        }
+        char msg2[] = "125 - Data connection already open; trasfer starting";
+        if (mq_send(control_queue, msg2, strlen(msg2) + 1, NULL) == -1) {
+                perror("mq_send() selhal - execute_commands");
+                exit(EXIT_FAILURE);
+        }
+         
         // ted kdyz jsme udelali data connection, tak musime nastavit bufferevent a event_loop na tomto socket descriptoru a ty callbacky, stejne u PASV
 
         // ("501 - Syntax error in parameters or arguments")
@@ -982,26 +1008,63 @@ void execute_commands(char *command) {
     }
     else if (strstr("PASV", command)) {
         // passive - client starts every connection, server listens
-        const char *address = (const char *)malloc(INET_ADDRSTRLEN); // 255.255.255.255 => 15 + \0 => INET_ADDRSTRLEN
-        if ( !inet_ntop(server_data_info.sin_family, &server_data_info.sin_addr.s_addr, address, INET_ADDRSTRLEN)) {
-            perror("inet_ntop() selhalo - execute_commands");
-        }
-        
-        for (int i = 0; i < INET_ADDRSTRLEN; i++) {
-            if (address[i] == '.') {
-                address[i] = ',';
+        // ("227 - Entering Passive Mode (h1,h2,h3,h4,p1,p2)")
+        if (!ftp_user_info.user_loggedin) {
+            if ( bind(ftp_sockets.ftp_data_socket, (struct sockaddr *)server_data_info.sin_addr.s_addr, 4) == -1){
+            perror("bind() selhal - execute commands");
+            exit(EXIT_FAILURE);
+            }
+
+            if ( listen(ftp_sockets.ftp_data_socket, BACKLOG) == -1) {
+                perror("listen() selhal - execute commands");
+                exit(EXIT_FAILURE);
+            }
+
+            int ftp_data_com;
+            if ( ftp_data_com = (accept(ftp_sockets.ftp_data_socket, NULL, NULL)) == -1) {
+                perror("accept() selhal - execute commands");
+                exit(EXIT_FAILURE);
+            }
+            ftp_sockets.ftp_data_com = ftp_data_com;
+
+            struct event_base evbase_data = event_base_new();
+            struct bufferevent bufevent_data = bufferevent_socket_new(evbase_data, ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS);
+
+            void (*bufevent_write_data)(struct bufferevent *bufevent_control, short events, void *ptr_arg) = bufevent_write_data;
+            void (*bufevent_read_data)(struct bufferevent *bufevent_control, short events, void *ptr_arg) = bufevent_read_data;
+            bufferevent_setcb(bufevent_data, bufferevent_read_data, bufferevent_write_data, NULL, NULL); // 2. pointer, ktery budou chtit
+
+            bufferevent_enable(bufevent_data, EV_READ | EV_WRITE);
+
+            const char *address = (const char *)malloc(INET_ADDRSTRLEN); // 255.255.255.255 => 15 + \0 => INET_ADDRSTRLEN
+            if ( !inet_ntop(server_data_info.sin_family, (struct sockaddr *)&server_data_info.sin_addr.s_addr, address, INET_ADDRSTRLEN)) {
+                perror("inet_ntop() selhalo - execute_commands");
+            }
+            
+            for (int i = 0; i < INET_ADDRSTRLEN; i++) {
+                if (address[i] == '.') {
+                    address[i] = ',';
+                }
+            }
+            unsigned char *port_array = &server_data_info.sin_port;
+            int st_Byte_port = port_array[0];
+            int nd_Byte_port = port_array[1];
+
+            char *reply = (char *)malloc(50);
+            memset(reply, 0, 50);
+            snprintf(reply, 49, "227 Entering Passive Mode (%s,%d,%d)", address, st_Byte_port, nd_Byte_port); // prida i \0
+            
+            if ( mq_send(control_queue, reply, strlen(reply) + 1, NULL) == -1) {
+                perror("mq_send() selhal - execute_commands");
+                exit(EXIT_FAILURE);
             }
         }
-        unsigned char *port_array = &server_data_info.sin_port;
-        int st_Byte_port = port_array[0];
-        int nd_Byte_port = port_array[1];
 
-        char *reply = (char *)malloc(50);
-        memset(reply, 0, 50);
-
-        snprintf(reply, 49, "227 Entering Passive Mode (%s,%d,%d)", address, st_Byte_port, nd_Byte_port); // prida i \0
-
-        // ("227 - Entering Passive Mode (h1,h2,h3,h4,p1,p2)")
+        char msg2[] = "125 - Data connection already open; trasfer starting";
+        if (mq_send(control_queue, msg2, strlen(msg2) + 1, NULL) == -1) {
+            perror("mq_send() selhal - execute_commands");
+            exit(EXIT_FAILURE);
+        }
     }
     else {
         const char msg1[] = "202 - Command not implemented, superfluous at this site"; // superfluous => nadbytecny 
@@ -1010,6 +1073,7 @@ void execute_commands(char *command) {
             exit(EXIT_FAILURE);
         }
     }
+    control_write_ftp(bufevent_control);
 }
 
 char *read_contents_ftp(char *path) {
@@ -1041,7 +1105,7 @@ char *read_contents_ftp(char *path) {
 }
 
 // nemusime implementovat event_cb, protoze kazda funkce dostava short events, kde muzeme treba zjistit, jestli peer disconectnul socket
-void bufevent_read_cb_control(struct bufferevent *buf_event, short events, void *ptr_arg) {
+void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
     // v bufferu muzou byt vice TCP segmentu (data z TCP segmentu)
    
    reset_bufevent_data_len();
@@ -1049,7 +1113,7 @@ void bufevent_read_cb_control(struct bufferevent *buf_event, short events, void 
 
    size_t bytes_received, bytes_total;
    for ( ; ; ) {
-    bytes_received = bufferevent_read(buf_event, data + bytes_total, BUFEVENT_DATA_LEN - bytes_total);
+    bytes_received = bufferevent_read(bufevent_control, data + bytes_total, BUFEVENT_DATA_LEN - bytes_total);
 
     // protoze bufferevent_write pouziva read/write, tak muzeme dostat 0 Bytes, protoze bud se peer disocnectnul nebo jsme pouze dostali 0 Bytes, proto musime kontrolovat i flags
     if (bytes_received == 0 && ((BEV_EVENT_EOF & events) = BEV_EVENT_EOF) || ((BEV_EVENT_ERROR & events) == BEV_EVENT_ERROR)) {
@@ -1078,7 +1142,7 @@ void bufevent_read_cb_control(struct bufferevent *buf_event, short events, void 
         char *text = (char *)malloc(crlf_end_i);
         strcpy(text, data); // strcpy kopiruje string az do \0 (konci prave na \0)
 
-        execute_commands(text);
+        execute_commands(text, bufevent_control);
         break;
     }
    }
@@ -1086,7 +1150,7 @@ void bufevent_read_cb_control(struct bufferevent *buf_event, short events, void 
     // ftp commands jsou ukonceny CRLF jako v Telnetu (\r\n)
 }
 
-void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void *ptr_arg) {
+void control_write_ftp(struct bufferevent bufevent_control) {
     // control/data connection
     // based on that either send file or send an ftp code
     // write vrati 0 jenom pri tom pokud je zprava 0 (pokud je to pry POSIX system, tak by to nemelo vratit 0, mozna pokud by size zpravy by bylo vetsi SSIZE_MAX => 32 767 => getconf SSIZE_MAX)
@@ -1097,7 +1161,7 @@ void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void
                 char *buf = "Name (!AVE CHRISTUX REX FTP SERVER!) Name: ";
 
                 if (strlen(buf) > 0) { // protoze bufferevent_write() vraci 0 pro write, tak je to jenom takova ochrana
-                    if (bufferevent_write(buf_event, buf, strlen(buf) + 1) == -1) { // da data do output bufferu (struct evbuffer) struct bufferevent
+                    if (bufferevent_write(bufevent_control, buf, strlen(buf) + 1) == -1) { // da data do output bufferu (struct evbuffer) struct bufferevent
                         perror("bufferevent_write() selhal - write_control_cb - username");
                         exit(EXIT_FAILURE);
                     }
@@ -1107,7 +1171,7 @@ void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void
                 char *buf = "Password: ";
                 
                 if (strlen(buf) > 0) {
-                    if ( bufferevent_write(buf_event, buf, strlen(buf) + 1) == -1) {
+                    if ( bufferevent_write(bufevent_control, buf, strlen(buf) + 1) == -1) {
                         perror("bufferevent_write() selhal - write_control_cb - password");
                         exit(EXIT_FAILURE);
                     }
@@ -1129,7 +1193,7 @@ void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void
                 exit(EXIT_FAILURE);
             }
             else if (strlen(received_message) > 0) {
-                if ( bufferevent_write(buf_event, received_message, strlen(received_message) + 1) == -1) {
+                if ( bufferevent_write(bufevent_control, received_message, strlen(received_message) + 1) == -1) {
                     perror("bufferevent_write() selhal - write_control_cb - loggedin - case 1");
                     exit(EXIT_FAILURE);
                 }
@@ -1142,6 +1206,10 @@ void bufevent_write_cb_control(struct bufferevent *buf_event, short events, void
             break;
     }
     // pokud user logged in, tak pokracovat, pokud ne, tak poslat USER, PASS
+}
+
+void bufevent_write_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
+   printf("\nall data sent");
 }
 
 int save_file(char *path, char *data_received) {
@@ -1173,7 +1241,7 @@ int save_file(char *path, char *data_received) {
     return 0;
 }
 
-void bufevent_read_cb_data(struct bufferevent *buf_event, short events, void *ptr_arg) {
+void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
     mqd_t data_queue = mq_open("/data_queue", O_RDONLY);
 
     if (data_queue == -1) {
@@ -1208,7 +1276,7 @@ void bufevent_read_cb_data(struct bufferevent *buf_event, short events, void *pt
     save_file(path_to_receive, data); // tato funkce bud udela co ma, nebo skonci program => nemusime kontrolovat pomoci if statement 
 }
 
-void bufevent_write_cb_data(struct bufferevent *buf_event, short events, void *ptr_arg) {
+void data_send_ftp(struct bufferevent *bufevent_data) {
     // pokud chceme poslat soubor tak    read cb_c => write cb_c => write cb_d
     // pokud chceme prijmout souvor, tak read cb_c => write cb_c => read cb_d
     mqd_t data_queue = mq_open("/data_queue", O_RDONLY);
@@ -1234,10 +1302,15 @@ void bufevent_write_cb_data(struct bufferevent *buf_event, short events, void *p
 
     char *data_to_send = read_contents_ftp(path_to_send);
 
-    if ( bufferevent_write(buf_event, data_to_send, path_len + 1) == -1) { // + 1 pro \0, protoze 1 char file => @ Bytes => 3 Bytes pro \0
+    if ( bufferevent_write(bufevent_data, data_to_send, path_len + 1) == -1) { // + 1 pro \0, protoze 1 char file => @ Bytes => 3 Bytes pro \0
         perror("bufferevent_write() selhal - bufevent_write_cb_data");
         exit(EXIT_FAILURE);
     }
+}
+
+
+void bufevent_write_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
+    printf("\nall data sent");
 }
 
 // struct event, event_base, bufferevent, evbuffer
@@ -1250,50 +1323,37 @@ void bufevent_write_cb_data(struct bufferevent *buf_event, short events, void *p
 // bufferevent ma input a output buffer, s tim ze input buffer je read a output buffer je write
 
 void *handle_ftp_connections(void *temp_p) {
+    // bufferevents pro ftp control com socket
     struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)temp_p;
 
     // int ftp_control_com = ftp_sockets_p->ftp_control_com; // nebude zmateni, kompilator vi, ze nalevo je promenna a napravo je clen struktury, proto si to nepoplete
     // // kdyz nevime delku zpravi, tak bud musime poslat pred samotnou zpravou, kolik Bytes to bude chtit nebo udelame non-blocking socket => libevent
     // ftp_sockets_p->control_or_data = CONTROL;
 
-    struct event_base *evbase = event_base_new(); // default settings
+    struct event_base *evbase_control = event_base_new(); // default settings
 
-    if (evbase == NULL) {
+    if (evbase_control == NULL) {
         perror("event_base_new() selhal - data_connection");
         exit(EXIT_FAILURE);
     }
 
-    struct bufferevent *buf_event = bufferevent_socket_new(evbase, ftp_control_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS); // thread safe
+    struct bufferevent *bufevent_control = bufferevent_socket_new(evbase_control, ftp_control_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS); // thread safe
 
-    bufferevent_setcb(buf_event, bufevent_read_cb_control, bufevent_write_cb_control, NULL, ftp_sockets_p); // prvni NULL je pro eventcb, coz by melo byt ale stejny cb jako u event_base, ftp_sockets_p je pointer na argumenty ke vsem temto funkcim
+    void (*bufevent_write_control)(struct bufferevent bufevent_control, void *ptr_arg) = bufevent_write_cb_control;
+    void (*bufevent_read_control)(struct bufferevent bufevent_control, void *ptr_arg) = bufevent_read_cb_control;
+    bufferevent_setcb(bufevent_control, bufevent_read_control, bufevent_write_control, NULL, ftp_sockets_p); // prvni NULL je pro eventcb, coz by melo byt ale stejny cb jako u event_base, ftp_sockets_p je pointer na argumenty ke vsem temto funkcim
+    bufferevent_enable(bufevent_control, EV_READ | EV_WRITE);
 
     // edge-trigger event a level event trigger
     // toto se pouziva i digitalnich obvodech, ale v trochu jinem svetle, ale predstavme si 0 a 1 a stav mezi nimi, zkracene to znamena kdyz mame nejake event (hodnotu 0 nebo 1), tak u level event trigger dostaneme notifikaci s tim, ze event byl spusten a tato notifikace nam zustane porad nekde ulozena (u epoll revents nebo u libevent), ale porad tam bude napsane, ze je mozno neco udelat, ale kdyz to bude edge trigger, tak dostaneme jenom tu notifikaci o tom, ze neco je pripravene a tuto notifikaci dostaneme jenom jednou do te doby nez treba ten socket neprecteme z neho vsechny data a potom az muzeme dostat dalsi upozorneni od onoho socketu, takovy nonblocking upozorneni
 
-    struct event *event_read = event_new(evbase, ftp_control_com, EV_READ | EV_WRITE, event_callback, NULL); // initialized event
-    event_add(event_read, NULL); // event pending, to druhe je pro timeval struct pro timeval struct, proto, aby se v event loopu cekalo na ten timeout a potom se reklo, jestli se ten event opravdu stal nebo ne
 
-    event_base_loop(event_base, EVLOOP_NONLOCK | EVLOOP_NO_EXIT_ON_EMPTY); // bude cekat nez se nejake eventy udelaji ready a pokud zadne nebudou ready, tak se z tohoto loopu nevyskoci
-}
-// BUFFEREVENT ZNAMENA ZE SE TO BUDE PSAT ZA NAS, HIGH-LEVEL API
-void *data_connection(void *temp_p) {
-    struct Ftp_Sockets *ftp_sockets_p = (struct Ftp_Sockets *)temp_p;
+    // toto nepotrebujeme, toto za nas dela bufferevent, toto je jenom pro samotny socket
+    // struct event *event_read = event_new(evbase_control, ftp_control_com, EV_READ | EV_WRITE, event_callback, NULL); // initialized event
+    // event_add(event_read, NULL); // event pending, to druhe je pro timeval struct pro timeval struct, proto, aby se v event loopu cekalo na ten timeout a potom se reklo, jestli se ten event opravdu stal nebo ne
 
-    int ftp_data_com = ftp_sockets_p->ftp_data_com; // nebude zmateni, kompilator vi, ze nalevo je promenna a napravo je clen struktury, proto si to nepoplete
-
-    struct event_base *evbase = event_base_new(); // struct holding events
-    
-    if (event_base == NULL) {
-        perror("event_base_new() selhalo");
-        exit(EXIT_FAILURE);
-    }
-
-    struct bufferevent *buf_event = bufferevent_socket_new(); // umozni nam ziskat eventy o sockety 
-
-
-
-
-
+    // evbase control se naplni interne
+    event_base_loop(evbase_control, EVLOOP_NONLOCK | EVLOOP_NO_EXIT_ON_EMPTY); // bude cekat nez se nejake eventy udelaji ready a pokud zadne nebudou ready, tak se z tohoto loopu nevyskoci
 }
 
 void *select_ftp(void *ftp_sockets) {
@@ -1314,10 +1374,7 @@ void *select_ftp(void *ftp_sockets) {
     FD_ZERO(&readbitmask);
 
     FD_SET(ftp_sockets_p->ftp_control_socket, &readbitmask);
-    FD_SET(ftp_sockets_p->ftp_data_socket, &readbitmask);
-
     void *(*handle_ftp)(void *) = &handle_ftp_connections;
-    // void *(*f_data_con)(void *) = &data_connection;
 
     // read, write, exception
     // kousek na tom socketu prijme, kousek na tom socketu zapise, moc se nedeje, je to exception treba out of band data u TCP
@@ -1330,7 +1387,7 @@ void *select_ftp(void *ftp_sockets) {
     // select vraci total pocet vsech file desciptoru, ktere jsou volne na operaci (v ramci daneho fd_setu)
     // pokud se tento if statement nestane, tak ono prijde SYN => SYN queue, odesle se SYN + ACK => client je touto dobou uz pripojeny, posle ACK, ted je server pripojeny, ale je to pripojene jenom na kernel level, protoze server neudelal accept()! => z tohoto muze byt velky problem => SYN flood, connection pool flooding => DoS
     // atomicka operace je ta, ktera bezi bez preruseni
-    if (rv == 2) {
+    if (rv == 1) {
         // proces ma 4 nejhlavnejsi identity => RUID (Real U - user ID), EUID (Effective UID), RGID (Real group id), EGID (Effective group id), nejhlavnejsi jsou ale RUID a EUID, AUID => je cislo, ktere se priradi userovi kdyz se prihlasi a pokazde kdyz ten user spusti nejaky program, tak ten proces zdedi tento AUID => audit user ID
         // pokud bude mode jiny nez ma samotny soubor, tak se to rozhodne podle implemetance UNIX/Linux, nase implementace bude mit permise 4777 -> man mq_open
         mdq_t control_message_queue = mq_open("/control_queue", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO, S_ISUID, NULL); // 4777 -> /name pokud bude tady nekde mq_open se stejnou hodnotou, tak se to odkazuje na tu stejnou mqueue
