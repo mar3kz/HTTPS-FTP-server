@@ -1,3 +1,4 @@
+// AVE CHRISTUS REX!
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,8 @@
 #define STDIN 0
 #define NFDS 4 // number of file descriptors
 int num = 1;
+int QUEUE_MESSAGE_LEN = 256;
+int BUFEVENT_DATA_LEN = 512;
 
 typedef struct Ftp_Dtp_Data {
     char *path;
@@ -28,17 +31,6 @@ typedef struct Ftp_Dtp_Data {
     size_t file_length;
 } ftp_dtp_data;
 ftp_dtp_data obj;
-
-
-struct Control_Args {
-    int ftp_c_socket;
-    struct sockaddr_in *server_c_info;
-};
-
-struct Data_Args {
-    int ftp_d_socket;
-    struct sockaddr_in *server_d_info;
-};
 
 enum Ftp_Code_Login {
     FSC = 535, // failed security check
@@ -104,6 +96,18 @@ struct Node_Linked_List {
 };
 struct Node_Linked_List *root_node;
 char *root_node_path;
+
+struct Ftp_Sockets {
+    int ftp_control_socket;
+    int ftp_control_com;
+    int ftp_data_socket;
+    int ftp_data_com;
+}
+struct Ftp_Sockets ftp_sockets_obj = { .ftp_control_com = -1, .ftp_data_com = -1};
+
+struct sockaddr_in server_control_info;
+struct sockaddr_in server_data_info;
+struct bufferevent bufevent_control;
 
 char **make_path_lk(char **dir_names, int dir_count, char *path) {
     // protoze v tom linked list bude pointer na pointer jenom slov (tich slozek), potom tahle path, my ty paths spojime na cele path, abychom vedeli, kam potom zase jit
@@ -724,47 +728,155 @@ void send_ftp_code(char *message, int ftp_control_com) {
 
 // protoze FTP server (originalni implementaci podporuje jenom ascii soubory), takze nemuzeme posilat treba veci v cestine, protoze to je jina encoding sada, tak prakticky jenom zalezi, jak se interne ulozi ty chars, protoze, pokud v programu to ulozime jako unsigned char => 1 Bytes, tak kdybychom chteli ulozit 2 Bytes znak do 1 Bytes znaku, tak by to nefungovalo
 // tento server bude podporovat jenom ASCII (potom kdyztak utf-8)
-void *handle_ftp(void *temp_p) {
-    // client nemusi mit setsockopt SO_REUSEADDR, protoze se binduje k nejakemu stanovemu portu, client ma svuj lokalni port, takze se vzdycky zmeni
-    struct Control_Args *control_arg_struct = (struct Control_Args *)temp_p;
 
-    int ftp_control_socket = control_arg_struct->ftp_c_socket; // nejde rovnou typecastovat, protoze -> ma vetsi prednost nez (type cast) 
-    struct sockaddr_in *server_control_info = control_arg_struct->server_c_info; // VZDY se musi castovat void * pointer, protoze C nevi, na jaky datovy typ se ukazuje, nevi klik memory se ma priradit one promenne, kam chceme ty data ulozit, proto se to musi vzdy castovat
+char *read_contents_ftp(char *path) {
+    int fd = open(path, O_RDONLY);
 
-    printf("+-----------------------------------------+");
-    printf("| this version of FTP implements:         |");
-    printf("| DATA REPRESENTATION: ASCII NONPRINT (N) |");
-    printf("| TRANSMISSION MODE  : STREAM             |");
-    printf("| DATA STRUCTURE     : FILE-STRUCTURE     |");
-    printf("| COMMANDS: USER, PASS, QUIT, PORT, PASV  |");
-    printf("|           RETR, STOR, NOOP, TYPE        |");
-    printf("+-----------------------------------------+");
-    // tento socket bude blocking, protoze budeme vzdy cekat na odpoved od serveru
-    // nedela nic specialniho; pokud bude false, tak se to ukonci; nedela nic specialniho
+    // pokud bychom meli FILE *, tak musime pouzit fileno() pro ziskani file descriptoru
+    struct stat info;
 
+    // stat/fstat/lstat
+    if (stat(path, &info) == -1) {
+        perror("stat() selhal - read_contents_ftp");
+        exit(EXIT_FAILURE);
+    }
 
+    size_t len_file = info.st_size;
+    char *data_from_file = (char *)malloc(len_file + 1); // file s jednim znakem => 2 Bytes => char + \n => proto + 1 pro => 3 Bytes
 
-    printf("+------------------------------------------------+");
-    printf("| USER string = log in - necessary 1st command!  |"); // 2
-    printf("| PASS string = log in - necessary 2nd command!  |"); // 2
-    printf("| QUIT        = log out (files will be sent)     |"); // 1
-    printf("| PORT        = server -> client data con.       |"); // 7
-    printf("| PASV        = client -> server data con.       |"); // 0
-    printf("| RETR        = retrieve last specified file by  |"); // 1
-    printf("| STOR        = send a file to server            |"); // 2
-    printf("| NOOP        = server will send OK code & msg   |"); // 1
-    printf("| TYPE        = ASCII N(on-print)/Image (bits)   |"); // 3
-    printf("+------------------------------------------------+");
+    ssize_t bytes_read;
+    size_t total_bytes = 0;
+    while ( bytes_read = read(fd, data_from_file + total_bytes, len_file - total_bytes) != len_file) {
+        if ( bytes_read == -1) {
+            perror("read() selhal - read_contents_ftp");
+            exit(EXIT_FAILURE);
+        }
+        total_bytes += bytes_read;
+    }
+    data_from_file[total_bytes] = '\0';
+    return data_from_file;
+}
 
-    // transmission mode - stream indikuje EOF jako ukonceni konekce, dalsi soubor musi na dalsi konekci, ale pozor toto muzeme delat, jenom kdyz mame tu socket adresu muzeme reusovat a ze se nema cekat na ten TCP delay
-    // kdyz se ukonci TCP socket, tak se jeste TIME_WAIT chvilku bude cekat nez prijde ACK od druheho hosta, aby oba vedeli, ze ta konekce bude ukoncena
-    printf("\nDATA STRUCTURE      = file-structure (contiguous bits)");
-    // transmission mode definovano takhle, protoze kdyby to bylo block, tak to by odpovidalo TCP s Nagle algorithm a stream by bylo TCP bez Nagle algorithm => jakoby nonblocking
-    printf("\nTRANSMISSION MODE   = stream (with Nagle algortithm - TCP segments will wait for data to be as full)");
-    printf("\nDATA REPRESENTATION = ASCII Non-print (only ASCII chars)/Image (bit data)");
+void data_send_ftp(struct bufferevent *bufevent_data) {
+    mqd_t data_queue;
+    if ( data_queue = mq_open("/data_queue", O_RDWR) == -1) {
+        perror("mq_open() selhal - data_send_ftp");
+        exit(EXIT_FAILURE);
+    }
 
-    // nebo 100
+    char *queue_path = (char *)malloc(QUEUE_MESSAGE_LEN);
+    memset(queue_path, 0, QUEUE_MESSAGE_LEN);
+    if ( mq_receive(data_queue, queue_path, QUEUE_MESSAGE_LEN, NULL) == -1) {
+        perror("mq_receive() selhal - data_send_ftp");
+        exit(EXIT_FAILURE);
+    }
+
+    char *data_to_send = read_contents_ftp(queue_path);
+    if ( bufferevent_write(bufevent_data, data_to_send, strlen(data_to_send) + 1) == -1) {
+        perror("bufferevent_write() selhal - data_send_ftp");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void control_send_ftp(struct bufferevent *bufevent_control) {
+    mqd_t control_queue;
+    if (mq_open("/control_queue", O_RDWR) == -1) {
+        perror("mq_open() selhal - control_send_ftp");
+        exit(EXIT_FAILURE);
+    }
+
+    char *command = (char *)malloc(QUEUE_MESSAGE_LEN);
+    memset(command, 0, QUEUE_MESSAGE_LEN); // automaticky NULL terminated
+
+    if (mq_receive(control_queue, command, QUEUE_MESSAGE_LEN, NULL) == -1) {
+        perror("mq_receive() selhal - control_send_ftp");
+        exit(EXIT_FAILURE);
+    }
+
+    if ( bufferevent_write(bufevent_control, command, QUEUE_MESSAGE_LEN) == -1) {
+        perror("bufferevent_write() selhal - control_send_ftp");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void bufevent_write_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
+    printf("\nall data sent");
+}
+
+void entering_commands(struct bufferevent *bufevent_control) {
     char *user_request = (char *)malloc(sizeof(char) * 100);
+    zero_memory(user_request); // automaticky NULL terminated
+
+    mqd_t control_queue = mq_open("/control_queue", O_RDWR);
+    if (control_queue == -1) {
+        perror("mq_open() selhal - control_send_ftp");
+        exit(EXIT_FAILURE);
+    }
+
+    int introduction = 0;    
+    while(1) {
+        if (!introduction) {
+            printf("+-----------------------------------------+");
+            printf("| AVE CHRISTUS REX FTP server implements: |");
+            printf("|                                         |");
+            printf("| DATA REPRESENTATION: ASCII NONPRINT (N) |");
+            printf("| TRANSMISSION MODE  : STREAM             |");
+            printf("| DATA STRUCTURE     : FILE-STRUCTURE     |");
+            printf("| COMMANDS: USER, PASS, QUIT, PORT, PASV  |");
+            printf("|           RETR, STOR, NOOP, TYPE        |");
+            printf("+-----------------------------------------+");
+
+            printf("+------------------------------------------------+");
+            printf("| USER string = log in - necessary 1st command!  |"); // 2
+            printf("| PASS string = log in - necessary 2nd command!  |"); // 2
+            printf("| QUIT        = log out (teminate control con.)  |"); // 1
+            printf("| PORT        = server -> client data con.       |"); // 7
+            printf("| PASV        = client -> server data con.       |"); // 0
+            printf("| RETR        = retrieve last specified file by  |"); // 1
+            printf("| STOR        = send a file to server            |"); // 2
+            printf("| NOOP        = server will send OK code & msg   |"); // 1
+            printf("| TYPE        = ASCII N(on-print)/Image (bits)   |"); // 3
+            printf("+------------------------------------------------+");
+
+            // transmission mode - stream indikuje EOF jako ukonceni konekce, dalsi soubor musi na dalsi konekci, ale pozor toto muzeme delat, jenom kdyz mame tu socket adresu muzeme reusovat a ze se nema cekat na ten TCP delay
+            // kdyz se ukonci TCP socket, tak se jeste TIME_WAIT chvilku bude cekat nez prijde ACK od druheho hosta, aby oba vedeli, ze ta konekce bude ukoncena
+            printf("\nDATA STRUCTURE      = file-structure (contiguous bits)");
+            // transmission mode definovano takhle, protoze kdyby to bylo block, tak to by odpovidalo TCP s Nagle algorithm a stream by bylo TCP bez Nagle algorithm => jakoby nonblocking
+            printf("\nTRANSMISSION MODE   = stream (with Nagle algortithm - TCP segments will wait for data to be as full)");
+            printf("\nDATA REPRESENTATION = ASCII Non-print (only ASCII chars)/Image (bit data)");
+
+            scanf("Name: %99[^\n]", user_request); // chceme cist maximalne 99 charakteru, protoze +1 pro \0 a chceme cist vsechny charaktery nez nenarazime na \n, potom uz to nechceme cist a nebudeme to cist \n, mezera mezi " a % znamena, ze chceme ignorovat kazdy whitespace v stdout bufferu (vsechny znaky, ktere kdyz vyprintujeme, tak proste nemaji ten normalni charakter)
+            control_send_ftp(bufevent_control);
+            if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
+                perror("mq_send() selhal - control_send_ftp");
+                exit(EXIT_FAILURE);
+            }
+            zero_memory(user_request);
+
+            scanf("Password: %99[^\n]", user_request);
+            control_send_ftp(bufevent_control);
+            if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
+                perror("mq_send() selhal - control_send_ftp");
+                exit(EXIT_FAILURE);
+            }
+            zero_memory(user_request);
+            // tento socket bude blocking, protoze budeme vzdy cekat na odpoved od serveru
+            // nedela nic specialniho; pokud bude false, tak se to ukonci; nedela nic specialniho
+
+            introduction = 1;
+        }
+    }
+
+    scanf("$ %99[^\n]", user_request);
+
+    
+
+
+
+    
+    
+    // nebo 100
+ 
     
 
     int new_user_connection = 0;
@@ -804,14 +916,7 @@ void *handle_ftp(void *temp_p) {
             }
 
 
-            scanf("Name: %99[^\n]", user_request); // chceme cist maximalne 99 charakteru, protoze +1 pro \0 a chceme cist vsechny charaktery nez nenarazime na \n, potom uz to nechceme cist a nebudeme to cist \n, mezera mezi " a % znamena, ze chceme ignorovat kazdy whitespace v stdout bufferu (vsechny znaky, ktere kdyz vyprintujeme, tak proste nemaji ten normalni charakter)
-            send_ftp_info(user_request, strlen(user_request) + 1);
-            zero_memory(user_request);
-
-
-            scanf("Password: %99[^\n]", user_request);
-            send_ftp_info(user_request, strlen(user_request) + 1);
-            zero_memory(user_request);
+            
 
             enum FTP_Code_Login recv_code = recv_ftp_info(ftp_control_com);
             switch (recv_code) {
@@ -833,28 +938,58 @@ void *handle_ftp(void *temp_p) {
         }
         
         scanf(" %99[^\n]", user_request);
-        enum Ftp_Commands ftp_commands = get_ftp_command(user_request);
-
-       
+        enum Ftp_Commands ftp_commands = get_ftp_command(user_request);  
     }
 }
 
-void *data_connection(void *temp_p) {
-    // proc se to typecastuje na struct sockaddr *, protoze sockaddr_in a sockaddr_in6 a sockaddr maji stejne rozlozeni pole family, takze se podle toho, jaka struktura se ma interne pouzivat, vsechno jsou to jenom data
-    struct Data_Args *data_arg_struct = (struct Data_Args *)temp_p; // nejde to rovnou typecastovat, protoze -> ma vetsi prednost nez (type cast)
+void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
+    char *command_reply = (char *)malloc(BUFEVENT_DATA_LEN);
+    memset(command_reply, 0, QUEUE_MESSAGE_LEN);
 
-    int ftp_data_socket = (int)data_arg_struct->ftp_d_socket;
-    struct sockaddr_in *server_data_info = (struct sockaddr_in *)data_arg_struct->server_d_info; // 1. ->, 2. *
-    
-    int ftp_data_com;
-    if ( (ftp_data_com = connect(ftp_data_socket, (struct sockaddr *)server_data_info, sizeof(server_data_info))) == -1) {
-        perror("connect() selhal - ftp_data");
+    if ( bufferevent_read(vufevent_control, command_reply, BUFEVENT_DATA_LEN) == 0) {
+        perror("bufferevent_read() selhal - bufevent_read_cb_control (bud 0 Bytes, nebo se vyskitl error)");
+        exit(EXIT_FAILURE);
+    }
+    printf("\n%s", command_reply);
+}
+
+void *handle_ftp_connections() {
+    // client nemusi mit setsockopt SO_REUSEADDR, protoze se binduje k nejakemu stanovemu portu, client ma svuj lokalni port, takze se vzdycky zmeni
+   
+   /*
+    grep -i "in_addr_t" /usr/include/netinet/in.h
+    typedef uint32_t in_addr_t;
+   */
+    int ftp_control_com;
+    if (ftp_control_com = (connect(ftp_sockets_obj.ftp_control_socket, server_control_info.sin_addr.s_addr, sizeof(uint32_t)) ) == -1) {
+        perror("connect() selhal - handle_ftp_connections");
         exit(EXIT_FAILURE);
     }
 
+    mqd_t control_queue;
+    if ( (control_queue = mq_open("/control_queue", O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID, NULL)) == -1) { // 4777
+        perror("mq_open() selhal - handle_ftp_connections");
+        exit(EXIT_FAILURE);
+    }
 
-    printf("ftp_data_com %d", ftp_data_com);
-    printf("\n\n\n\nvse probehlo ok, jsem pripojeny \n\n\n\n");
+    struct event_base evbase_control = event_base_new();
+    if (evbase_control == NULL) {
+        perror("bevent_base_new() selhal - handle_ftp_connections");
+        exit(EXIT_FAILURE);
+    }
+
+    bufevent_control = bufferevent_socket_new(evbase_control, ftp_control_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS);
+    if (bufevent_control == NULL) {
+        perror("buffervent_socket_new() selhal - handle_ftp_connections");
+        exit(EXIT_FAILURE);
+    }
+
+    void (*bufevent_write_control)(struct bufferevent *bufevent_control, void *ptr_arg) = bufevent_write_cb_control;
+    void (*bufevent_read_control)(struct bufferevent *bufevent_control, void *ptr_arg) = bufevent_read_cb_control;
+    bufferevent_setcb(bufevent_control, bufevent_read_control, bufevent_write_control, NULL, NULL); // 1. NULL => eventcb, 2. NULL => pointer, ktery se preda vsem callbackum
+    bufferevent_enable(EV_READ | EV_WRITE); // event base pro bufferevent
+
+    event_base_loop(bufevent_control, EVLOOP_NO_EXIT_ON_EMPTY);
 }
 
 int main() {
@@ -862,14 +997,11 @@ int main() {
     clock_t start;
     start = clock(); // counting tics from the start of this process
 
-
     struct sockaddr_in server_control_info;
     memset(&server_control_info, 0, sizeof(struct sockaddr_in)); // ujisteni, ze struiktura je opravdu prazdna, bez garbage values, v struct adrrinfo bych diky 
     //tomu nastavit protokol TCP!
-
     server_control_info.sin_family = AF_INET;
     server_control_info.sin_port = htons(CONTROL_PORT); // htons => host to network short
-
     // pokud je datovy typ nejaky typ pole nebo struktura, union apod., TAK TO MUSIM ZKOPIROVAT DO TOHO a nejde to jenom priradit!!
     // naplneni hints.sin_addr
     if (inet_pton(server_control_info.sin_family, "127.0.0.1", &server_control_info.sin_addr.s_addr) <= 0) { // pred a po hints.sin_addr nemusi byt ty zavorky a povazuji se za nadbytecne
@@ -877,23 +1009,8 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-
-    struct sockaddr_in server_data_info;
-    memset(&server_data_info, 0, sizeof(struct sockaddr_in));
-
-    server_data_info.sin_family = AF_INET;
-    server_data_info.sin_port = htons(DATA_PORT);
-
-    // "muze se do davat rovnou do te struktury, protoze ma jen jednoho clena a tam se kopiruji ty data a zrovna to vyjde na tu delku, ale kdyby tam byly dva cleny, tak je lepsi tam uvest samotneho clena te struktury", takhle je to napsane v serveru, ale tady to je to explicitne napsane, coz je best practice
-    if (inet_pton(server_data_info.sin_family, "127.0.0.1", &server_data_info.sin_addr.s_addr) == 0) {
-        perror("inet_pton selhal() - ftp_data");
-        exit(EXIT_FAILURE);
-    }
-
-
     // pokazde kdyz se client pripoji, tak dostane novy nahodny port od OS, proto musi server udelat setsockopt SO_REUSABLE, protoze server nemenni port a binduje
     // ten stejny
-
     // client zahajuje control connection u FTP, potom se muze rozhoudnout, jestli zahaji server nebo client data connection
     int ftp_control_socket; // vytvori se jakoby zakladni socket descriptor popisujici, ze bude komunikace pres sit a potom pomoci connect
     // se klientovi priradi ten nahodny ephemeral port a ten socket descriptor se jakoby zmeni na communication socket descriptor
@@ -904,33 +1021,21 @@ int main() {
     }
     // 0 => OS vybere nejlepsi protokol pro ty specifikace, jinak ty protokoly jsou definovane v glibc netine/in.h
 
-    int ftp_data_socket;
-    if ( (ftp_data_socket = socket(server_data_info.sin_family, SOCK_STREAM, 0)) == -1) {
-        perror("socket() selhal - ftp_data");
-        exit(EXIT_FAILURE);
-    }
-
     // control_connection((void *)&control_args);
     
-    pthread_t thread_control, thread_data; // ID of thread
+    pthread_t thread_control, command_control; // ID of thread
+    const pthread_attr_t thread_attributes;
 
-    struct Control_Args control_args = { .ftp_c_socket = ftp_control_socket, .server_c_info = &server_control_info };
-
-   
-
-    struct Data_Args data_args = { .ftp_d_socket = ftp_data_socket, .server_d_info = &server_data_info};
-
-    void *(* f_control_connection)(void *) = &handle_ftp; // int, struct sockaddr **
-    // void *(* f_data_connection)(void *) = &data_connection; // int, struct sockaddr **
-
-    if ( pthread_create(&thread_control, NULL, f_control_connection, (void *)&control_args)); { // NULL je atribut pro atribut strukturu, ktera specifikuje urcite atributy nove vytvoreneho thread, jako scheduling policy, inherit scheduler
-        perror("pthread_create() selhal - thread_control");
+    void *(*handle_ftp_p)(void *) = handle_ftp_connections; // int, struct sockaddr **
+    if ( pthread_create(&thread_control, NULL, handle_ftp_p, (void *)&control_args)) { // NULL je atribut pro atribut strukturu, ktera specifikuje urcite atributy nove vytvoreneho thread, jako scheduling policy, inherit scheduler
+        perror("pthread_create() selhal - main() - thread_control");
         exit(EXIT_FAILURE);
     }
 
-    // pthread vraci 0 pri success
-    if ( pthread_create(&thread_data, NULL, f_data_connection, (void *)&data_args)) {
-
+    void *(*command_control_p)(void *) = entering_commands;
+    if ( pthread_create(&command_control, NULL, command_control_p, NULL)) {
+        perror("pthread_create() selhal - main() - command_control");
+        exit(EXIT_FAILURE);
     }
 
 
@@ -941,3 +1046,28 @@ int main() {
     // > ma vetsi prioritu nez =
     return EXIT_SUCCESS;
 }
+/*
+// // "muze se do davat rovnou do te struktury, protoze ma jen jednoho clena a tam se kopiruji ty data a zrovna to vyjde na tu delku, ale kdyby tam byly dva cleny, tak je lepsi tam uvest samotneho clena te struktury", takhle je to napsane v serveru, ale tady to je to explicitne napsane, coz je best practice
+// if (inet_pton(server_data_info.sin_family, "127.0.0.1", &server_data_info.sin_addr.s_addr) == 0) {
+//     perror("inet_pton selhal() - ftp_data");
+//     exit(EXIT_FAILURE);
+// }
+
+
+int ftp_data_socket;
+if ( (ftp_data_socket = socket(server_data_info.sin_family, SOCK_STREAM, 0)) == -1) {
+    perror("socket() selhal - ftp_data");
+    exit(EXIT_FAILURE);
+}
+
+
+struct Data_Args data_args = { .ftp_d_socket = ftp_data_socket, .server_d_info = &server_data_info};
+// void *(* f_data_connection)(void *) = &data_connection; // int, struct sockaddr **
+
+ struct Control_Args *control_arg_struct = (struct Control_Args *)temp_p;
+
+int ftp_control_socket = control_arg_struct->ftp_c_socket; // nejde rovnou typecastovat, protoze -> ma vetsi prednost nez (type cast) 
+struct sockaddr_in *server_control_info = control_arg_struct->server_c_info; // VZDY se musi castovat void * pointer, protoze C nevi, na jaky datovy typ se ukazuje, nevi klik memory se ma priradit one promenne, kam chceme ty data ulozit, proto se to musi vzdy castovat
+*/
+
+// AVE CHRISTUS REX!

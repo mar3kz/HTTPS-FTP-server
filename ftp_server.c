@@ -1073,7 +1073,7 @@ void execute_commands(char *command, struct bufferevent bufevent_control) {
             exit(EXIT_FAILURE);
         }
     }
-    control_write_ftp(bufevent_control);
+    control_send_ftp(bufevent_control);
 }
 
 char *read_contents_ftp(char *path) {
@@ -1150,7 +1150,7 @@ void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_ar
     // ftp commands jsou ukonceny CRLF jako v Telnetu (\r\n)
 }
 
-void control_write_ftp(struct bufferevent bufevent_control) {
+void control_send_ftp(struct bufferevent bufevent_control) {
     // control/data connection
     // based on that either send file or send an ftp code
     // write vrati 0 jenom pri tom pokud je zprava 0 (pokud je to pry POSIX system, tak by to nemelo vratit 0, mozna pokud by size zpravy by bylo vetsi SSIZE_MAX => 32 767 => getconf SSIZE_MAX)
@@ -1374,7 +1374,6 @@ void *select_ftp(void *ftp_sockets) {
     FD_ZERO(&readbitmask);
 
     FD_SET(ftp_sockets_p->ftp_control_socket, &readbitmask);
-    void *(*handle_ftp)(void *) = &handle_ftp_connections;
 
     // read, write, exception
     // kousek na tom socketu prijme, kousek na tom socketu zapise, moc se nedeje, je to exception treba out of band data u TCP
@@ -1395,11 +1394,11 @@ void *select_ftp(void *ftp_sockets) {
         fflush(stdout);
 
         ftp_sockets_p->ftp_data_com = -1;
-
         ftp_sockets_p->ftp_control_com = accept(ftp_sockets_p->ftp_control_socket, NULL, NULL);
-        pthread_t thread_control;
 
-        if ( (thread_control = (pthread_create(thread_control, NULL, handle_ftp, (void *)ftp_sockets))) !=  0) {
+        pthread_t thread_control;
+        void *(*handle_ftp_p)(void *) = &handle_ftp_connections;
+        if ( (thread_control = (pthread_create(thread_control, NULL, handle_ftp_p, (void *)ftp_sockets))) !=  0) {
             perror("pthread_create() selhal - select_ftp");
             exit(EXIT_FAILURE);
         }
@@ -1410,11 +1409,9 @@ void *select_ftp(void *ftp_sockets) {
         return NULL;
     }
     else {
+        printf("\n\n\n\nnestalo se\n\n\n\n");
         exit(EXIT_FAILURE);
     }
-    printf("\n\n\n\nnestalo se\n\n\n\n");
-
-    return NULL;
 }
 
 int main()
