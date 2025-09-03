@@ -102,7 +102,7 @@ struct Ftp_Sockets {
     int ftp_control_com;
     int ftp_data_socket;
     int ftp_data_com;
-}
+};
 struct Ftp_Sockets ftp_sockets_obj = { .ftp_control_com = -1, .ftp_data_com = -1};
 
 struct sockaddr_in server_control_info;
