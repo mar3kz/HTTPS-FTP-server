@@ -58,8 +58,8 @@
 </ul>
 
 <p>the actual linking can be done by either linker hardcoding the path for the loader to look at in the ELF file's header, or looking at environment variables, or there are some directories where the loader looks defaultly - configuration file for dynamic linker or /lib and /usr/lib</p>
-<p>dynamic linker = dynamic loader = loader, different name because the distinction between the functions its doing was necessary</p>
-
+<p>dynamic linker = dynamic loader = library loader, BUT != kernel loader (loads executables in memory), different name because the distinction between the functions its doing was necessary</p>
+<p>https://stackoverflow.com/questions/9989298/what-is-the-difference-between-dynamic-linker-and-dynamic-loader</p>
 
 <h4>theory</h4>
 https://stackoverflow.com/questions/845355/do-programming-language-compilers-first-translate-to-assembly-or-directly-to-mac
