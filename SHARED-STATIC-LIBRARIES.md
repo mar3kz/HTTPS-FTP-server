@@ -36,6 +36,7 @@
   <li>Linker is the final step of turning the .c into .elf file (executable file), there's another program though which is needed for runtime dynamic searching libraries, loading the executable into memory...this program is called a loader</li>
   <li>.o -> .elf</li>
 </ul>
+https://medium.com/@abhishekjainindore24/linker-flags-its-options-1119ff6fa7f9<br>
 
 <h1 align="center">Loading and dynamic searching for libraries</h1>
 <h3>Loader</h3>
