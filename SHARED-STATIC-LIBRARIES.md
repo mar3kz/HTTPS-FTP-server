@@ -80,7 +80,7 @@ https://unix.stackexchange.com/questions/5915/difference-between-bin-and-usr-bin
 https://stackoverflow.com/questions/13795237/what-does-the-export-command-do
 https://www.reddit.com/r/C_Programming/comments/5pf49s/the_differences_between_using_gccg_to_compile/
 https://www.reddit.com/r/embedded/comments/er0skc/is_it_a_bad_look_to_use_g_compiler_when_99_of/
-
+<br><p>!Very useful! -></p>
 https://stackoverflow.com/questions/16710047/usr-bin-ld-cannot-find-lnameofthelibrary
 https://medium.com/@abhishekjainindore24/linker-flags-its-options-1119ff6fa7f9
 https://tldp.org/HOWTO/Program-Library-HOWTO/shared-libraries.html
