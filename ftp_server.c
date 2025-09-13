@@ -26,6 +26,7 @@
 #include <stdint.h> // uint32_t
 #include <mqueue.h> // komunikace mezi jeden thread
 #include <event2/thread.h>
+#include <event2/bufferevent_ssl.h>
 // event2, protoze to je novejsi verze, kdybych tam dal jenom event, tak
 // #include <event.h>
 //#include <openssl/ssl/ssl_local.h>
@@ -634,7 +635,7 @@ uint32_t return_address(char **metadata_command) {
     unsigned char *address_array = (unsigned char *)malloc(4);
 
     for (int i = 0, address_array_i = 0; i < 5; i++) {
-        address_array[address_array_i++] = (unsigned char *)metadata_command[i]; 
+        memcpy(&address_array[address_array_i++], metadata_command[i], sizeof(unsigned char ) * 4);
     }
     memcpy(&address, address_array, sizeof(unsigned char ) * 4);
 

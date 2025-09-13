@@ -14,6 +14,16 @@
 #include <sys/stat.h> // stat, lstat, fstat
 #include <pthread.h>
 #include <time.h> // clock() - vraci tics od zacatku programu
+#include <event2/bufferevent_ssl.h>
+#include <event2/bufferevent.h>
+#include <event2/thread.h>
+#include <event2/event.h>
+#include <openssl/ssl.h>
+#include <openssl/crypto.h>
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <mqueue.h>
+#include <errno.h>
 
 #define CONTROL_PORT 2100
 #define DATA_PORT 2000
@@ -32,11 +42,6 @@ typedef struct Ftp_Dtp_Data {
 } ftp_dtp_data;
 ftp_dtp_data obj;
 
-enum Ftp_Code_Login {
-    FSC = 535, // failed security check
-    INU_O_PS = 430, // invalid username or password
-    ULOG_IN = 230, // user logged in
-};
 // AF_INET = Address Family Internet
 // sin = socket internet
 
@@ -105,9 +110,30 @@ struct Ftp_Sockets {
 };
 struct Ftp_Sockets ftp_sockets_obj = { .ftp_control_com = -1, .ftp_data_com = -1};
 
+enum Ftp_Code_Login {
+    FAILED_SECURITY = 535,
+    INVALID_USERNAME_PASSWORD = 430,
+    USER_LOGGEDIN = 230,
+};
+enum Ftp_Code_Login ftp_code_login;
+
+enum Ftp_Commands {
+    USER, // 0
+    PASS,
+    QUIT,
+    PORT,
+    PASV,
+    RETR,
+    STOR,
+    NOOP,
+    TYPE, // 8
+};
+enum Ftp_Commands ftp_commands;
+
 struct sockaddr_in server_control_info;
 struct sockaddr_in server_data_info;
-struct bufferevent bufevent_control;
+struct bufferevent *bufevent_control;
+struct event_base *evbase_control;
 
 char **make_path_lk(char **dir_names, int dir_count, char *path) {
     // protoze v tom linked list bude pointer na pointer jenom slov (tich slozek), potom tahle path, my ty paths spojime na cele path, abychom vedeli, kam potom zase jit
@@ -633,12 +659,6 @@ static char *path_to_open(char *path) {
     return path_to_file;
 }
 
-
-void receive_codes_data(int com_socket, enum ) {
-
-}
-
-
 static int ftp_dtp() {
     // ~/Documets/FTP_SERVER
     // => /home/marek
@@ -803,7 +823,81 @@ void bufevent_write_cb_control(struct bufferevent *bufevent_control, void *ptr_a
     printf("\nall data sent");
 }
 
-void entering_commands(struct bufferevent *bufevent_control) {
+void handle_command_function(char *command) {
+    /*
+    USER
+    PASS
+    QUIT
+    PORT
+    PASV
+    RETR
+    STOR
+    NOOP
+    TYPE
+    */
+    mqd_t control_queue = mq_open("/control_queue", O_RDWR);
+    if (control_queue == -1) {
+        perror("mq_open() selhal - handle_command_function");
+        exit(EXIT_FAILURE);
+    }
+
+
+    if (strstr("QUIT", command) != NULL) {
+
+    }
+    else if (strstr("PORT", command) != NULL) {
+        // pro klienta
+        unsigned char *byte_field_address = (unsigned char *)&server_control_info.sin_addr.s_addr; // nova promenna Bytes na memory adresu, kde je ulozeno 4 Bytes
+
+        int st_byte_addr = byte_field_address[0];
+        int nd_byte_addr = byte_field_address[1];
+        int rd_byte_addr = byte_field_address[2];
+        int fth_byte_addr = byte_field_address[3];
+
+        // PORT = server se pripojuje na clienta (data)
+        // PASV = client se pripojuje na server (data)
+
+        unsigned char *byte_field_port = (unsigned char *)&server_control_info.sin_port;
+
+        int st_byte_port = byte_field_port[0];
+        int nd_byte_port = byte_field_port[1];
+
+        printf("\nPORT %d,%d,%d,%d,%d,%d", st_byte_addr, nd_byte_addr, rd_byte_addr, fth_byte_addr, st_Byte_port, nd_Byte_port);
+
+        char *port_command = (char *)malloc(20);
+        memset(port_command, 0, 20);
+        snprintf(port_command, "PORT %d,%d,%d,%d,%d,%d", st_byte_addr, nd_byte_addr, rd_byte_addr, fth_byte_addr, st_Byte_port, nd_Byte_port);
+
+        if ( mq_send(control_queue, port_command, strlen(port_command) + 1, 31) == -1) {
+            perror("mq_send() selhal - handle_command_function - PORT");
+            exit(EXIT_FAILURE);
+        }
+    }
+    else if (strstr("PASV", command) != NULL) {
+        int ftp_data_com = connect(ftp_sockets_obj.ftp_data_socket, )
+    }
+    else if (strstr("RETR", command) != NULL) {
+        
+    }
+    else if (strstr("STOR", command) != NULL) {
+        
+    }
+    else if (strstr("TYPE", command) != NULL) {
+        
+    }
+    else {
+        // errno ma hodnotu 0, pokud je vse ok, pokud je to rozdilne, tak nekde nastala chyba
+        if (errno != 0) {
+            perror("nekde se vyskytla chyba - handle_command_function");
+            exit(EXIT_FAILURE);
+        }
+        else {
+            fprintf(stderr, "zadany command nepotrebuje explicitni funkci");
+        }        
+    }
+}
+
+void *entering_commands(void *arg) {
     char *user_request = (char *)malloc(sizeof(char) * 100);
     zero_memory(user_request); // automaticky NULL terminated
 
@@ -846,7 +940,7 @@ void entering_commands(struct bufferevent *bufevent_control) {
             printf("\nDATA REPRESENTATION = ASCII Non-print (only ASCII chars)/Image (bit data)");
 
             scanf("Name: %99[^\n]", user_request); // chceme cist maximalne 99 charakteru, protoze +1 pro \0 a chceme cist vsechny charaktery nez nenarazime na \n, potom uz to nechceme cist a nebudeme to cist \n, mezera mezi " a % znamena, ze chceme ignorovat kazdy whitespace v stdout bufferu (vsechny znaky, ktere kdyz vyprintujeme, tak proste nemaji ten normalni charakter)
-            control_send_ftp(bufevent_control);
+            // control_send_ftp(bufevent_control);
             if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
                 perror("mq_send() selhal - control_send_ftp");
                 exit(EXIT_FAILURE);
@@ -854,7 +948,7 @@ void entering_commands(struct bufferevent *bufevent_control) {
             zero_memory(user_request);
 
             scanf("Password: %99[^\n]", user_request);
-            control_send_ftp(bufevent_control);
+            // control_send_ftp(bufevent_control);
             if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
                 perror("mq_send() selhal - control_send_ftp");
                 exit(EXIT_FAILURE);
@@ -869,9 +963,12 @@ void entering_commands(struct bufferevent *bufevent_control) {
 
     scanf("$ %99[^\n]", user_request);
 
-    
+    if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
+        perror("mq_send() selhal - entering commands");
+        exit(EXIT_FAILURE);
+    }
 
-
+    // port, pasv, stor, retr
 
     
     
@@ -882,24 +979,9 @@ void entering_commands(struct bufferevent *bufevent_control) {
     int new_user_connection = 0;
     for (;;) {
         if (!new_user_connection) {
-            int recv_code;
 
             /*
-            // pro klienta
-            unsigned char *byte_field_address = (unsigned char *)&server_control_info.sin_addr.s_addr; // nova promenna Bytes na memory adresu, kde je ulozeno 4 Bytes
-
-            int st_byte_addr = byte_field_address[0];
-            int nd_byte_addr = byte_field_address[1];
-            int rd_byte_addr = byte_field_address[2];
-            int fth_byte_addr = byte_field_address[3];
-
-            // PORT = server se pripojuje na clienta (data)
-            // PASV = client se pripojuje na server (data)
-
-            unsigned char *byte_field_port = (unsigned char *)&server_control_info.sin_port;
-
-            int st_byte_port = byte_field_port[0];
-            int nd_byte_port = byte_field_port[1];
+           
 
 
 
@@ -910,7 +992,7 @@ void entering_commands(struct bufferevent *bufevent_control) {
             int ftp_control_com;
             // (**) se z toho stane struktura, (**) je dereference jako (*(*ptr))
             // blocking, protoze client zacina control connection
-            if ( (ftp_control_com = connect(ftp_control_socket, (struct sockaddr *)server_control_info, sizeof((*server_control_info)) )) == -1 ) { // () meni poradi operandu
+            if ( (ftp_control_com = connect(ftp_sockets_obj.ftp_control_socket, (struct sockaddr *)&server_control_info, sizeof(server_control_info) )) == -1 ) { // () meni poradi operandu
                 perror("connect() selhal - ftp_control");
                 exit(EXIT_FAILURE);
             }
@@ -918,15 +1000,15 @@ void entering_commands(struct bufferevent *bufevent_control) {
 
             
 
-            enum FTP_Code_Login recv_code = recv_ftp_info(ftp_control_com);
-            switch (recv_code) {
-                case FSC:
+            enum FTP_Code_Login ftp_code_login = ftp_account_info(ftp_control_com);
+            switch (ftp_code_login) {
+                case FAILED_SECURITY:
                     send_ftp_code("535 - Failed security check", ftp_control_com);
                     break;
-                case INU_O_PS:
+                case INVALID_USERNAME_PASSWORD:
                     send_ftp_code("430 - Invalid username or password", ftp_control_com);
                     break;
-                case ULOG_IN:
+                case USER_LOGGEDIN:
                     send_ftp_code("230 - User logged in, proceed", ftp_control_com);
                     send_ftp_code("220 -    Service ready for new user", ftp_control_com);
                     new_user_connection = 1;
@@ -938,7 +1020,7 @@ void entering_commands(struct bufferevent *bufevent_control) {
         }
         
         scanf(" %99[^\n]", user_request);
-        enum Ftp_Commands ftp_commands = get_ftp_command(user_request);  
+        // enum Ftp_Commands ftp_commands = get_ftp_command(user_request);  
     }
 }
 
@@ -946,14 +1028,14 @@ void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_ar
     char *command_reply = (char *)malloc(BUFEVENT_DATA_LEN);
     memset(command_reply, 0, QUEUE_MESSAGE_LEN);
 
-    if ( bufferevent_read(vufevent_control, command_reply, BUFEVENT_DATA_LEN) == 0) {
+    if ( bufferevent_read(bufevent_control, command_reply, BUFEVENT_DATA_LEN) == 0) {
         perror("bufferevent_read() selhal - bufevent_read_cb_control (bud 0 Bytes, nebo se vyskitl error)");
         exit(EXIT_FAILURE);
     }
     printf("\n%s", command_reply);
 }
 
-void *handle_ftp_connections() {
+void *setup_bufferevent_callbacks() {
     // client nemusi mit setsockopt SO_REUSEADDR, protoze se binduje k nejakemu stanovemu portu, client ma svuj lokalni port, takze se vzdycky zmeni
    
    /*
@@ -961,35 +1043,36 @@ void *handle_ftp_connections() {
     typedef uint32_t in_addr_t;
    */
     int ftp_control_com;
-    if (ftp_control_com = (connect(ftp_sockets_obj.ftp_control_socket, server_control_info.sin_addr.s_addr, sizeof(uint32_t)) ) == -1) {
-        perror("connect() selhal - handle_ftp_connections");
+    if (ftp_control_com = (connect(ftp_sockets_obj.ftp_control_socket, (struct sockaddr *)&server_control_info.sin_addr.s_addr, sizeof(uint32_t)) ) == -1) {
+        perror("connect() selhal - setup_bufferevent_callbacks");
         exit(EXIT_FAILURE);
     }
 
     mqd_t control_queue;
     if ( (control_queue = mq_open("/control_queue", O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID, NULL)) == -1) { // 4777
-        perror("mq_open() selhal - handle_ftp_connections");
+        perror("mq_open() selhal - setup_bufferevent_callbacks");
         exit(EXIT_FAILURE);
     }
 
-    struct event_base evbase_control = event_base_new();
+    evbase_control = event_base_new();
+
     if (evbase_control == NULL) {
-        perror("bevent_base_new() selhal - handle_ftp_connections");
+        perror("bevent_base_new() selhal - setup_bufferevent_callbacks");
         exit(EXIT_FAILURE);
     }
 
     bufevent_control = bufferevent_socket_new(evbase_control, ftp_control_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS);
     if (bufevent_control == NULL) {
-        perror("buffervent_socket_new() selhal - handle_ftp_connections");
+        perror("buffervent_socket_new() selhal - setup_bufferevent_callbacks");
         exit(EXIT_FAILURE);
     }
 
     void (*bufevent_write_control)(struct bufferevent *bufevent_control, void *ptr_arg) = bufevent_write_cb_control;
     void (*bufevent_read_control)(struct bufferevent *bufevent_control, void *ptr_arg) = bufevent_read_cb_control;
     bufferevent_setcb(bufevent_control, bufevent_read_control, bufevent_write_control, NULL, NULL); // 1. NULL => eventcb, 2. NULL => pointer, ktery se preda vsem callbackum
-    bufferevent_enable(EV_READ | EV_WRITE); // event base pro bufferevent
+    bufferevent_enable(bufevent_control, EV_READ | EV_WRITE); // event base pro bufferevent
 
-    event_base_loop(bufevent_control, EVLOOP_NO_EXIT_ON_EMPTY);
+    event_base_loop(evbase_control, EVLOOP_NO_EXIT_ON_EMPTY);
 }
 
 int main() {
@@ -1026,8 +1109,8 @@ int main() {
     pthread_t thread_control, command_control; // ID of thread
     const pthread_attr_t thread_attributes;
 
-    void *(*handle_ftp_p)(void *) = handle_ftp_connections; // int, struct sockaddr **
-    if ( pthread_create(&thread_control, NULL, handle_ftp_p, (void *)&control_args)) { // NULL je atribut pro atribut strukturu, ktera specifikuje urcite atributy nove vytvoreneho thread, jako scheduling policy, inherit scheduler
+    void *(*setup_p)(void *) = setup_bufferevent_callbacks; // int, struct sockaddr **
+    if ( pthread_create(&thread_control, NULL, setup, NULL)) { // NULL je atribut pro atribut strukturu, ktera specifikuje urcite atributy nove vytvoreneho thread, jako scheduling policy, inherit scheduler
         perror("pthread_create() selhal - main() - thread_control");
         exit(EXIT_FAILURE);
     }
@@ -1041,7 +1124,7 @@ int main() {
 
     // data_connection(&data_args);
 
-    ftp_dtp();
+    // ftp_dtp();
 
     // > ma vetsi prioritu nez =
     return EXIT_SUCCESS;
