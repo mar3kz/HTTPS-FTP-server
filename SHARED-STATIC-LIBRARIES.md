@@ -4,7 +4,7 @@
   <li>When we write a program, there's different stages of preparation till the file can be considered an executable file</li>
   <li>.so = shared, .a = static</li>
   <li>Static linking = depends on the linker but some could copy and paste all of the code (text of the function) in our .elf file, some could just copy and paste just all the dependencies, nonetheless the actual size of the .elf file will be larger in size</li>
-  <li>Shared linking = loader will look at GOT table and map the needed memory TO THE VIRTUAL SPACE OF THE PROCESS, thus making the size comparably smaller than static linking but making the virtual memory of the process larger compared to static linking</li>
+  <li>Shared linking = loader will look at GOT table and map the needed memory TO THE VIRTUAL SPACE OF THE PROCESS, thus making the size comparably smaller than static linking</li>
   <li>In a nutshell, the linker (ld) does STATIC linking (copying and pasting the function the program needs) and the loader does the run-time DYNAMIC LINKING (from environment variables, default settings, rpath), but beware there are many types of loaders, for example a loader that actually LOADS the file into memory and sets ups the virtual memory, reallocation, etc. AND there's the other loader which LOADS the needed functions into the pre-loaded virtual memory of the process</li>
   <li>although this could be different on different types of systems as stated here https://unix.stackexchange.com/questions/50335/unix-linux-loader-process it says, that there is a linker ld which statically links the libraries AND another linker/loader ld.so/ld-linux.so is actually doing a job of linking and finding the needed references and also loading them into the virtual memory of the process</li>
   <li>.elf, .so CAN be executed, there just has to be an entry point (main function or whatever function we specify), everything that has the ELF header can be executed</li>
@@ -14,6 +14,7 @@
   <li>-L /path is the argument for the linker to look for files (shared objects, static objects - linker/loader) on where to find them</li>
   <li>-I /path is the argument for the linker to look for files (header file, source code files - linker/loader) on where to find them, ALSO it is needed to specify the NAME of the library as -llibrary_name => -l for library (lib) and library_name as the library name, so for libevent => -levent, libssl => -lssl</li>
   <li>more info about actually putting commands for the linker and loader here https://medium.com/@abhishekjainindore24/linker-flags-its-options-1119ff6fa7f9</li>
+  <li>ld.so/ld-linux.so = runtime linker/dynamic loader => linker/loader</li>
 </ul>
 <h2>Stages of a file becoming an executable</h2>
 <ul>
