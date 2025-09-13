@@ -15,6 +15,8 @@
   <li>-I /path is the argument for the STATIC linker to look for files (header file, source code files - linker/loader) on where to find them, ALSO it is needed to specify the NAME of the library as -llibrary_name => -l for library (lib) and library_name as the library name, so for libevent => -levent, libssl => -lssl</li>
   <li>more info about actually putting commands for the linker and loader here https://medium.com/@abhishekjainindore24/linker-flags-its-options-1119ff6fa7f9</li>
   <li>ld.so/ld-linux.so = runtime linker/dynamic loader => linker/loader</li>
+  <li>Runtime linker = ld.so/ld-linux.so</li>
+  <li>Static linker = ld command => /usr/bin/ld</li>
 </ul>
 <h2>Stages of a file becoming an executable</h2>
 <ul>
