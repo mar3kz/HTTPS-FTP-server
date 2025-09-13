@@ -2,6 +2,18 @@
 <ul>
   <li>Libraries generically are just files with certain declarations, functions that could be used further for any user that gets his hands on the particular library, therefore it's just a file</li>
   <li>When we write a program, there's different stages of preparation till the file can be considered an executable file</li>
+  <li>.so = shared, .a = static</li>
+  <li>Static linking = depends on the linker but some could copy and paste all of the code (text of the function) in our .elf file, some could just copy and paste just all the dependencies, nonetheless the actual size of the .elf file will be larger in size</li>
+  <li>Shared linking = loader will look at GOT table and map the needed memory TO THE VIRTUAL SPACE OF THE PROCESS, thus making the size comparably smaller than static linking but making the virtual memory of the process larger compared to static linking</li>
+  <li>In a nutshell, the linker (ld) does STATIC linking (copying and pasting the function the program needs) and the loader does the run-time DYNAMIC LINKING (from environment variables, default settings, rpath), but beware there are many types of loaders, for example a loader that actually LOADS the file into memory and sets ups the virtual memory, reallocation, etc. AND there's the other loader which LOADS the needed functions into the pre-loaded virtual memory of the process</li>
+  <li>although this could be different on different types of systems as stated here https://unix.stackexchange.com/questions/50335/unix-linux-loader-process it says, that there is a linker ld which statically links the libraries AND another linker/loader ld.so/ld-linux.so is actually doing a job of linking and finding the needed references and also loading them into the virtual memory of the process</li>
+  <li>.elf, .so CAN be executed, there just has to be an entry point (main function or whatever function we specify), everything that has the ELF header can be executed</li>
+</ul>
+<h2>Specifing the commands to a compiler</h2>
+<ul>
+  <li>-L /path is the argument for the linker to look for files (shared objects, static objects - linker/loader) on where to find them</li>
+  <li>-I /path is the argument for the linker to look for files (header file, source code files - linker/loader) on where to find them, ALSO it is needed to specify the NAME of the library as -llibrary_name => -l for library (lib) and library_name as the library name, so for libevent => -levent, libssl => -lssl</li>
+  <li>more info about actually putting commands for the linker and loader here https://medium.com/@abhishekjainindore24/linker-flags-its-options-1119ff6fa7f9</li>
 </ul>
 <h2>Stages of a file becoming an executable</h2>
 <ul>
@@ -58,7 +70,7 @@ https://medium.com/@abhishekjainindore24/linker-flags-its-options-1119ff6fa7f9<b
   <li>Dynamic linking happens mainly with loader and it memory maps the virtual memory of the shared object to every process that is using that very library as the process's own virtual memory</li>
 </ul>
 
-<p>the actual linking can be done by either linker hardcoding the path for the loader to look at in the ELF file's header, or looking at environment variables, or there are some directories where the loader looks defaultly - configuration file for dynamic linker or /lib and /usr/lib</p>
+<p>the actual linking can be done by either linker hardcoding the path for the loader to look at in the ELF file's header, or looking at environment variables, or there are some directories where the loader looks defaultly - configuration file for dynamic linker or /lib and /usr/lib (/lib is for libraries that are required to run the system and /usr/lib are libraries that the user has installed and are not needed for running the system - https://unix.stackexchange.com/questions/679569/what-is-the-difference-between-lib-and-usr-lib-and-var-lib)</p>
 <p>dynamic linker = dynamic loader = library loader, BUT != kernel loader (loads executables in memory), different name because the distinction between the functions its doing was necessary</p>
 <p>https://stackoverflow.com/questions/9989298/what-is-the-difference-between-dynamic-linker-and-dynamic-loader</p>
 
