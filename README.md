@@ -3,7 +3,7 @@ protože tato stránka neběží na WWW, proto nemůžeme požádat nějakou CA,
 <br><br>
 Abychom neměli pořád ikonku toho nezabezpečeného zámečku, tak si musíme vygenerovat svůj vlastní certifikát a private key, který budeme považovat za lokálního root CA, potom si vygenerujeme privátní klíč a CSR (Certificate Signing Request), kde si vyplníme informace o tom našem requestu (podobné jako samotný certifikát) a potom jen necháme podepsat našim lokalním root CA a do Firefoxu dáme ten lokální root CA a v kódu budeme používat ten server certifikát a ten klíč
 <br><br>
-Některé certifikáty stojí peníze, ale postupem času se Let's encrypt (CA) rozhodli udělat to, že budou vydávat certifikáty zdarma za účelem zabezpečení internetu, ale podmínka je, že ten webový server musí běžet na WWW (vylepšení placeného certifikátu = 27/7 podpora, záruka...)
+Některé certifikáty stojí peníze, ale postupem času se Let's encrypt (CA) rozhodli udělat to, že budou vydávat certifikáty zdarma za účelem zabezpečení internetu, ale podmínka je, že ten webový server musí běžet na WWW (vylepšení placeného certifikátu = 24/7 podpora, záruka...)
 <br><br>
 <h2 align="center"><strong>Soubor obsahuje relativní cesty, proto je potřeba tento program pouštět ze složky FTP_SERVER</strong></h2>
 <br>
