@@ -18,6 +18,7 @@
 #include <event2/bufferevent.h>
 #include <event2/thread.h>
 #include <event2/event.h>
+#include <event2/util.h> // EVUTIL_SOCKET_ERROR()
 #include <openssl/ssl.h>
 #include <openssl/crypto.h>
 #include <openssl/bio.h>
@@ -131,13 +132,21 @@ enum Ftp_Commands {
 };
 enum Ftp_Commands ftp_commands;
 
+enum Ftp_Data_Representation {
+    ASCII,
+    IMAGE,
+};
+enum Ftp_data_Representation ftp_data_representation = ASCII;
+
 struct Ftp_User_Info {
     char *name_info;
     int loggedin_info; // 1 = TRUE, 0 = FALSE
     int ftp_data_com;
     int ftp_control_com;
+
+    enum Ftp_Data_Representation ftp_data_representation;
 };
-struct Ftp_User_Info ftp_user_info;
+struct Ftp_User_Info ftp_user_info = { .ftp_data_representation = ASCII};
 
 struct sockaddr_in server_control_info;
 struct sockaddr_in server_data_info;
@@ -875,8 +884,116 @@ void control_send_ftp(struct bufferevent *bufevent_control) {
     }
 }
 
+void reset_bufevent_data_len() {
+    BUFEVENT_DATA_LEN = 512;
+}
+
+void send_ftp_commands(struct bufferevent *bufevent_control) {
+    mqd_t control_queue = mq_open("/control_queue", O_RDWR);
+    if (control_queue == -1) {
+        perror("mq_open() selhal - bufevent_write_cb_control");
+        exit(EXIT_FAILURE);
+    }
+
+    char *commands_to_send = (char *)malloc(QUEUE_MESSAGE_LEN);
+    if ( commands_to_send == NULL) {
+        perror("malloc() selhal - bufevent_write_cb_control");
+        exit(EXIT_FAILURE);
+    }
+
+    if ( mq_receive(control_queue, commands_to_send, QUEUE_MESSAGE_LEN, NULL) == -1) {
+        perror("mq_receive() selhal - bufevent_write_cb_control");
+        exit(EXIT_FAILURE);
+    }
+
+    if ( bufferevent_write(bufevent_control, commands_to_send, QUEUE_MESSAGE_LEN) == -1) {
+        perror("bufferevent_write() selhal - bufevent_write_cb_control");
+        exit(EXIT_FAILURE);
+    }
+
+    // kazdy command se musi poslat pres control connection, aby i server dostal zpravy o informacich
+}
+
+void bufevent_event_cb_both(struct bufferevent *both, short events, void *ptr_arg) {
+    if (( (BUF_EVENT_ERROR | BUF_EVENT_EOF) & events) == BUF_EVENT_ERROR | BUF_EVENT_EOF) {
+        EVUTIL_SOCKET_ERROR();
+        exit(EXIT_FAILURE);
+    }
+}
+
+void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
+    
+}
+
 void bufevent_write_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
     printf("\nall data sent");
+}
+
+void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
+    reset_bufevent_data_len();
+
+    mqd_t data_queue = mq_open("/data_queue", O_RDWR);
+    if (data_queue == -1) {
+        perror("mq_open() selhal - bufevent_read_cb_data");
+        exit(EXIT_FAILURE);
+    }
+
+    char *path_to_save = (char *)malloc(QUEUE_MESSAGE_LEN);
+    if ( path_to_save == NULL) {
+        perror("malloc() selhal - bufevent_read_cb_data");
+        exit(EXIT_FAILURE);
+    }
+
+    if ( mq_receive(data_queue, path_to_save, QUEUE_MESSAGE_LEN, NULL) == -1) {
+        perror("mq_receive() selhal - bufevent_read_cb_data");
+        exit(EXIT_FAILURE);
+    }
+
+
+
+
+    char *data_buf = (char *)malloc(BUFEVENT_DATA_LEN);
+    if (data_buf == NULL) {
+        perror("malloc() selhal - bufevent_read_cb_data");
+        exit(EXIT_FAILURE);
+    }
+
+    size_t bytes_now, bytes_total = 0;
+    for (; ;) {
+        bytes_now = bufferevent_read(bufevent_data, data_buf + bytes_total, BUFEVENT_DATA_LEN - bytes_total);
+
+        if (bytes_now == -1) {
+            perror("bufferevent_read() selhal - bufevent_read_cb_data");
+            exit(EXIT_FAILURE);
+        }
+        else if (bytes_now == 0) {
+            printf("\nvse OK");
+            break;
+        }
+        bytes_total += bytes_now;
+
+        if (strstr("\r\n", data_buf) != NULL) {
+            // ftp asi ukonci connection aby se vedelo ze prenos je ukoncen pro transmission mode stream
+        }
+
+        if (total_bytes == BUFEVENT_DATA_LEN) {
+            BUFEVENT_DATA_LEN += 512;
+
+            char *temp_data_buf = (char *)realloc(data_buf, BUFEVENT_DATA_LEN);
+            if (temp_data_buf == NULL) {
+                free(data_buf);
+                perror("realloc() selhal - bufevent_read_cb_data");
+                exit(EXIT_FAILURE);
+            }
+            data_buf = temp_data_buf;
+
+        }
+    }
+    
+}
+
+void bufevent_write_cb_data(struct bufferevent *bufevent, void *ptr_arg) {
+    printf("\nzapsala se data");
 }
 
 char *extract_path_command(char *command) {
@@ -917,16 +1034,16 @@ void handle_command_function(char *command) {
     NOOP
     TYPE
     */
-    mqd_t control_queue = mq_open("/control_queue", O_RDWR);
-    if (control_queue == -1) {
-        perror("mq_open() selhal - handle_command_function");
-        exit(EXIT_FAILURE);
-    }
-    mqd_t data_queue = mq_open("/data_queue", O_RDWR);
-    if (data_queue == -1) {
-        perror("mq_open() selhal - handle_command_function");
-        exit(EXIT_FAILURE);
-    }
+
+    int control_queue_count = 0, data_queue_count = 0;
+    if (control_queue_count == 0) {
+        mqd_t control_queue = mq_open("/control_queue", O_RDWR);
+        if (control_queue == -1) {
+            perror("mq_open() selhal - handle_command_function");
+            exit(EXIT_FAILURE);
+        }
+        control_queue_count++;
+    }  
 
     if (strstr("QUIT", command) != NULL) {
         ftp_account_info.loggedin_info = 0;
@@ -993,27 +1110,44 @@ void handle_command_function(char *command) {
                 perror("nekde se naskytl error - handle_command_function - PASV");
                 exit(EXIT_FAILURE);
             }
-            
         }       
     }
-    else if (strstr("RETR", command) != NULL) {
-        char *path = extract_path_command(command);
-
-        if ( mq_send(data_queue, path, strlen(path) + 1, 31) == -1) {
-            perror("mq_send() selhal - handle_command_function - RETR");
-            exit(EXIT_FAILURE);
-        }
-    }
-    else if (strstr("STOR", command) != NULL) {
-        char *path = extract_path_command(command);
-
-        if ( mq_send(data_queue, path, strlen(path) + 1, 31) == -1) {
-            perror("mq_send() selhal - handle_command_function - STOR");
-            exit(EXIT_FAILURE);
-        }
-    }
     else if (strstr("TYPE", command) != NULL) {
+        if (strstr("IMAGE", command) != NULL) {
+            ftp_user_info.ftp_data_representation = IMAGE;
+        }
+        else {
+            ftp_user_info.ftp_data_representation = ASCII;
+        }
+    }
+    else if (strstr("RETR", command) != NULL || strstr("STOR", command) != NULL && ftp_user_info.loggedin == 1) { // tady se otevre datova message queue
+        if (data_queue_count == 0) {
+            mqd_t data_queue = mq_open("/data_queue", O_RDWR);
+            if (data_queue == -1) {
+                perror("mq_open() selhal - handle_command_function");
+                exit(EXIT_FAILURE);
+            }
+            data_queue_count++;
+        }
+              
+        if (strstr("RETR", command) != NULL) {
+            // retr
+            char *path = extract_path_command(command);
+
+            if ( mq_send(data_queue, path, strlen(path) + 1, 31) == -1) {
+                perror("mq_send() selhal - handle_command_function - RETR");
+                exit(EXIT_FAILURE);
+            }
+        }
         
+        if (strstr("STOR", command) != NULL) {
+            char *path = extract_path_command(command);
+
+            if ( mq_send(data_queue, path, strlen(path) + 1, 31) == -1) {
+                perror("mq_send() selhal - handle_command_function - STOR");
+                exit(EXIT_FAILURE);
+            }
+        }
     }
     else {
         // errno ma hodnotu 0, pokud je vse ok, pokud je to rozdilne, tak nekde nastala chyba
@@ -1022,7 +1156,7 @@ void handle_command_function(char *command) {
             exit(EXIT_FAILURE);
         }
         else {
-            fprintf(stderr, "zadany command nepotrebuje explicitni funkci");
+            fprintf(stderr, "zadany command nepotrebuje explicitni funkci nebo nejste prihlaseni a chcete pouzit command s data pripojenim");
         }        
     }
 }
@@ -1039,7 +1173,7 @@ void *entering_commands(void *arg) {
         exit(EXIT_FAILURE);
     }
 
-    int introduction = 0;    
+    int introduction = 0;
     while(1) {
         if (!introduction) {
             printf("+-----------------------------------------+");
