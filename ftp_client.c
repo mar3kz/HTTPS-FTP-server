@@ -19,6 +19,7 @@
 #include <event2/thread.h>
 #include <event2/event.h>
 #include <event2/util.h> // EVUTIL_SOCKET_ERROR()
+#include <event2/buffer.h> // evbuffer_get_length()...
 #include <openssl/ssl.h>
 #include <openssl/crypto.h>
 #include <openssl/bio.h>
@@ -133,8 +134,8 @@ enum Ftp_Commands {
 enum Ftp_Commands ftp_commands;
 
 enum Ftp_Data_Representation {
-    ASCII,
-    IMAGE,
+    ASCII = 0,
+    IMAGE = 1,
 };
 enum Ftp_data_Representation ftp_data_representation = ASCII;
 
@@ -145,6 +146,7 @@ struct Ftp_User_Info {
     int ftp_control_com;
 
     enum Ftp_Data_Representation ftp_data_representation;
+    int length_new_file;
 };
 struct Ftp_User_Info ftp_user_info = { .ftp_data_representation = ASCII};
 
@@ -229,62 +231,38 @@ char *change_path_curr_prev(char *path) {
     return final_buffer;
 }
 
-static void send_file(char *path) {
+void save_file(char *path, char *data) {
     // O => open() flags
     // S => file mode bits
     // F => fcntl() prikazy
-    DIR *dirstream_check = opendir(path);
-    printf("\npath: %s\n", path);
-    struct dirent *entry = readdir(dirstream_check);
 
-        // pokud to nebude k otevreni, tak by to melo file permissions 4777 // umask nemuze NIJAK ovlivnit setuid bit
-        // open(path, O_CREAT | O_APPEND | O_RDONLY, S_IRWXU | S_IRWXG, S_IRWXO, S_ISUID); // 4777 => spusteni s pravy vlastnika, vsichny read, write, execute
-        int fd = open(path, O_RDONLY | O_NOFOLLOW); // jen cteni, pokud je pathname symbolicky link, open() selze
-        if (fd == -1) {
-            perror("open() selhal - send_file()");
+    // pokud to nebude k otevreni, tak by to melo file permissions 4777 // umask nemuze NIJAK ovlivnit setuid bit
+    // open(path, O_CREAT | O_APPEND | O_RDONLY, S_IRWXU | S_IRWXG, S_IRWXO, S_ISUID); // 4777 => spusteni s pravy vlastnika, vsichny read, write, execute
+    int fd = open(path, O_CREAT | O_APPEND, S_IRWXU | S_IRWXO | S_IRWXG | S_ISUID);
+    if (fd == -1) {
+        perror("open() selhal - send_file()");
+        exit(EXIT_FAILURE);
+    }
+
+    size_t length_data, bytes_total = 0;
+    ssize_t bytes_now;
+    length_data = strlen(data) + 1;
+
+    for (; ;) { 
+        bytes_now = write(fd, data + bytes_total, length_data - bytes_total);
+
+        if ( bytes_now == -1) {
+            perror("write() selhal - send_file()");
             exit(EXIT_FAILURE);
         }
-
-        struct stat status_file;
-        int fstat_rv = fstat(fd, &status_file);
-        if (fstat_rv == -1) {
-            perror("fstat() selhal - send_file()");
-            exit(EXIT_FAILURE);
+        else if (bytes_total < length_data) {
+            bytes_total += bytes_now;
         }
-
-        off_t offset_length_file = status_file.st_size;
-
-        char *file_data = (char *)malloc(offset_length_file + 1);
-
-        ssize_t read_rv; // read muze vratit mene Bytes nez chceme
-        for (; (read_rv = (read(fd, file_data, offset_length_file))) != offset_length_file;) {
-            if (read_rv == -1) {
-                perror("read() selhal - send_file()");
-                exit(EXIT_FAILURE);
-            }
-            else if (read_rv == 0) {
-                fprintf(stderr, "EOF read - send_file()");
-                exit(EXIT_FAILURE);
-            }
+        else if (bytes_total == length_data) {
+            printf("\nvytvoren novy file");
+            break;
         }
-        file_data[read_rv] = '\0';
-
-        char *username = (char *)malloc(MAX_LEN);
-        getlogin_r(username, MAX_LEN);
-        if (username == NULL) {
-            perror("getlogin_r() selhal - ftp_dtp_data_struct");
-            exit(EXIT_FAILURE);
-        }
-
-        
-
-
-
-
-
-
-
-        
+    }       
 }
 
 int no_states_check(struct Node_Linked_List *node) {
@@ -915,22 +893,79 @@ void send_ftp_commands(struct bufferevent *bufevent_control) {
 }
 
 void bufevent_event_cb_both(struct bufferevent *both, short events, void *ptr_arg) {
-    if (( (BUF_EVENT_ERROR | BUF_EVENT_EOF) & events) == BUF_EVENT_ERROR | BUF_EVENT_EOF) {
+    if ( (BEV_EVENT_EOF & events) == BEV_EVENT_EOF) {
+        struct evbuffer *input_evbuffer = bufferevent_get_input(bufevent_control); // ziskame underlying vrstvu bufferevents => input/output evbuffer
+
+        // pokud se prerusi data connection a bude prazdny buffer, tak to znamena, ze server doposlal posledni data => zalezi na transmission modes
+        // toto by se melo zavolat az potom se zjisti, ze bufferevent_read dostal flag EOF => po dokonceni posilani jakychkoliv dat
+        if ( evbuffer_get_length(input_evbuffer) != 0) {
+            fprintf(stderr, "nejspise nastal error - EOF - bufevent_event_cb_both - data");
+            exit(EXIT_FAILURE);
+        }
+    }
+    else if (( (BEV_EVENT_ERROR) & events) == BEV_EVENT_ERROR) {
         EVUTIL_SOCKET_ERROR();
         exit(EXIT_FAILURE);
     }
 }
 
 void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
-    
+    reset_bufevent_data_len();
+
+    char *command_buf_to_recv = (char *)malloc(BUFEVENT_DATA_LEN);
+    memset(command_buf_to_recv, 0, BUFEVENT_DATA_LEN);
+
+    size_t total_bytes = 0, bytes_now;
+    for (; ;) {
+        bytes_now = bufferevent_read(bufevent_control, command_buf_to_recv + total_bytes, BUFEVENT_DATA_LEN - total_bytes);
+
+        if (bytes_now == -1) {
+            perror("bufferevent_read() selhal - bufevent_read_cb_control");
+            exit(EXIT_FAILURE);
+        }
+        else if (bytes_now == 0) {
+            
+            if (strstr("\r\n", command_buf_to_recv) != NULL) {
+                printf("\nvse precteno");
+                printf("\n%s", command_buf_to_recv);
+                break;
+            }
+            else {
+                fprintf(stderr, "\nserver nejspise neukoncil odpoved pomoci CRLF = carriage return line feed");
+            }
+            
+        }
+
+        total_bytes += bytes_now;
+    }
 }
 
 void bufevent_write_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
     printf("\nall data sent");
 }
 
+
 void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
     reset_bufevent_data_len();
+
+    mqd_t control_queue = mq_open("/control_queue", O_RDWR);
+    if (control_queue == -1) {
+        perror("mq_open() selhal - bufevent_read_cb_data");
+        exit(EXIT_FAILURE);
+    }
+
+    char *path_for_new_file = (char *)malloc(QUEUE_MESSAGE_LEN);
+    if (path_for_new_file == NULL) {
+        perror("bufferevent_read() selhal - bufevent_read_cb_data");
+        exit(EXIT_FAILURE);
+    }
+    memset(path_for_new_file, 0, QUEUE_MESSAGE_LEN);
+
+    if (mq_receive(control_queue, path_for_new_file, QUEUE_MESSAGE_LEN, NULL) == -1) {
+        perror("bufferevent_read() selhal - bufevent_read_cb_data");
+        exit(EXIT_FAILURE);
+    }
+    
 
     mqd_t data_queue = mq_open("/data_queue", O_RDWR);
     if (data_queue == -1) {
@@ -950,8 +985,6 @@ void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
     }
 
 
-
-
     char *data_buf = (char *)malloc(BUFEVENT_DATA_LEN);
     if (data_buf == NULL) {
         perror("malloc() selhal - bufevent_read_cb_data");
@@ -967,16 +1000,15 @@ void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
             exit(EXIT_FAILURE);
         }
         else if (bytes_now == 0) {
+            bytes_total += bytes_now;
+            ftp_user_info.length_new_file = bytes_total;
+            save_file(path_for_new_file, data_buf);
             printf("\nvse OK");
             break;
         }
         bytes_total += bytes_now;
 
-        if (strstr("\r\n", data_buf) != NULL) {
-            // ftp asi ukonci connection aby se vedelo ze prenos je ukoncen pro transmission mode stream
-        }
-
-        if (total_bytes == BUFEVENT_DATA_LEN) {
+        if (bytes_total == BUFEVENT_DATA_LEN) {
             BUFEVENT_DATA_LEN += 512;
 
             char *temp_data_buf = (char *)realloc(data_buf, BUFEVENT_DATA_LEN);
@@ -1022,6 +1054,10 @@ char *insert_crlf(char *command) {
     return command;
 }
 
+void *thread_callback_func(void *) {
+    event_base_loop(evbase_data, EVLOOP_NO_EXIT_ON_EMPTY);
+}
+
 void handle_command_function(char *command) {
     /*
     USER
@@ -1036,8 +1072,9 @@ void handle_command_function(char *command) {
     */
 
     int control_queue_count = 0, data_queue_count = 0;
+    mqd_t control_queue;
     if (control_queue_count == 0) {
-        mqd_t control_queue = mq_open("/control_queue", O_RDWR);
+        control_queue = mq_open("/control_queue", O_RDWR);
         if (control_queue == -1) {
             perror("mq_open() selhal - handle_command_function");
             exit(EXIT_FAILURE);
@@ -1046,9 +1083,9 @@ void handle_command_function(char *command) {
     }  
 
     if (strstr("QUIT", command) != NULL) {
-        ftp_account_info.loggedin_info = 0;
+        ftp_user_info.loggedin_info = 0;
         // nutnost usera zadat nove jmeno
-        ftp_account_info.name_info = NULL;
+        ftp_user_info.name_info = NULL;
         close(ftp_sockets_obj.ftp_data_com);
     }
     else if (strstr("PORT", command) != NULL) {
@@ -1068,24 +1105,24 @@ void handle_command_function(char *command) {
         int st_byte_port = byte_field_port[0];
         int nd_byte_port = byte_field_port[1];
 
-        printf("\nPORT %d,%d,%d,%d,%d,%d", st_byte_addr, nd_byte_addr, rd_byte_addr, fth_byte_addr, st_Byte_port, nd_Byte_port);
+        printf("\nPORT %d,%d,%d,%d,%d,%d", st_byte_addr, nd_byte_addr, rd_byte_addr, fth_byte_addr, st_byte_port, nd_byte_port);
 
         char *port_command = (char *)malloc(20);
         memset(port_command, 0, 20);
-        snprintf(port_command, "PORT %d,%d,%d,%d,%d,%d", st_byte_addr, nd_byte_addr, rd_byte_addr, fth_byte_addr, st_Byte_port, nd_Byte_port);
+        snprintf(port_command, 20, "PORT %d,%d,%d,%d,%d,%d", st_byte_addr, nd_byte_addr, rd_byte_addr, fth_byte_addr, st_byte_port, nd_byte_port);
 
         if ( mq_send(control_queue, port_command, strlen(port_command) + 1, 31) == -1) {
             perror("mq_send() selhal - handle_command_function - PORT");
             exit(EXIT_FAILURE);
         }
 
-        if (listen(ftp_data_socket, BACKLOG) == -1) {
+        if (listen(ftp_sockets_obj.ftp_data_socket, BACKLOG) == -1) {
             perror("listen() selhal - handle_command_function");
             exit(EXIT_FAILURE);
         }
 
         int ftp_data_com;
-        if ((ftp_data_com = accept(ftp_data_socket, NULL, NULL)) == -1) {
+        if ((ftp_data_com = accept(ftp_sockets_obj.ftp_data_socket, NULL, NULL)) == -1) {
             perror("accept() selhal - handle_command_function");
             exit(EXIT_FAILURE);
         }
@@ -1095,7 +1132,7 @@ void handle_command_function(char *command) {
     }
     else if (strstr("PASV", command) != NULL) {
         if (!ftp_user_info.loggedin_info) {
-            int ftp_data_com = connect(ftp_sockets_obj.ftp_data_socket, (struct sockadrr *)&server_data_info.sin_addr.s_addr, sizeof(unsigned int)); // 127.0.0.1:21 => port 21 = data connection
+            int ftp_data_com = connect(ftp_sockets_obj.ftp_data_socket, (const struct sockadrr *)&server_data_info.sin_addr.s_addr, sizeof(unsigned int)); // 127.0.0.1:21 => port 21 = data connection
             if (ftp_data_com == -1) {
                 perror("connect() selhal - handle_command_function");
                 exit(EXIT_FAILURE);
@@ -1120,14 +1157,31 @@ void handle_command_function(char *command) {
             ftp_user_info.ftp_data_representation = ASCII;
         }
     }
-    else if (strstr("RETR", command) != NULL || strstr("STOR", command) != NULL && ftp_user_info.loggedin == 1) { // tady se otevre datova message queue
-        if (data_queue_count == 0) {
-            mqd_t data_queue = mq_open("/data_queue", O_RDWR);
+    else if (strstr("RETR", command) != NULL || strstr("STOR", command) != NULL && ftp_user_info.loggedin_info == 1) { // tady se otevre datova message queue
+        mqd_t data_queue;
+        if (data_queue_count == 0 && ftp_sockets_obj.ftp_data_com != -1) {
+            data_queue = mq_open("/data_queue", O_CREAT | O_RDWR, S_IRWXU | S_IRWXO | S_IRWXG | S_ISUID); // 4777
             if (data_queue == -1) {
                 perror("mq_open() selhal - handle_command_function");
                 exit(EXIT_FAILURE);
             }
             data_queue_count++;
+
+            bufevent_data = bufferevent_socket_new(evbase_data, ftp_sockets_obj.ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS);
+            
+            void (*bufevent_event_both)(struct bufferevent *bufevent_both, short events, void *ptr_arg) = bufevent_event_cb_both;
+            void (*bufevent_write_data)(struct bufferevent *bufevent_data, void *ptr_arg) = bufevent_write_cb_data;
+            void (*bufevent_read_data)(struct bufferevent *bufevent_data, void *ptr_arg) = bufevent_read_cb_data;
+
+            bufferevent_setcb(bufevent_data, bufevent_read_data, bufevent_write_data, bufevent_event_both, NULL);
+
+            void *(*f_thread_callback_func)(void *) = thread_callback_func;
+            pthread_t callback_thread;
+
+            if ( pthread_create(&callback_thread, NULL, f_thread_callback_func, NULL) != 0) {
+                perror("pthread_create() selhal - handle_command_function - RETR");
+                exit(EXIT_FAILURE);
+            }
         }
               
         if (strstr("RETR", command) != NULL) {
@@ -1175,83 +1229,73 @@ void *entering_commands(void *arg) {
 
     int introduction = 0;
     while(1) {
-        if (!introduction) {
-            printf("+-----------------------------------------+");
-            printf("| AVE CHRISTUS REX FTP server implements: |");
-            printf("|                                         |");
-            printf("| DATA REPRESENTATION: ASCII NONPRINT (N) |");
-            printf("| TRANSMISSION MODE  : STREAM             |");
-            printf("| DATA STRUCTURE     : FILE-STRUCTURE     |");
-            printf("| COMMANDS: USER, PASS, QUIT, PORT, PASV  |");
-            printf("|           RETR, STOR, NOOP, TYPE        |");
-            printf("+-----------------------------------------+");
+        printf("+-----------------------------------------+");
+        printf("| AVE CHRISTUS REX FTP server implements: |");
+        printf("|                                         |");
+        printf("| DATA REPRESENTATION: ASCII NONPRINT (N) |");
+        printf("| TRANSMISSION MODE  : STREAM             |");
+        printf("| DATA STRUCTURE     : FILE-STRUCTURE     |");
+        printf("| COMMANDS: USER, PASS, QUIT, PORT, PASV  |");
+        printf("|           RETR, STOR, NOOP, TYPE        |");
+        printf("+-----------------------------------------+");
 
-            printf("+------------------------------------------------+");
-            printf("| USER string = log in - necessary 1st command!  |"); // 2
-            printf("| PASS string = log in - necessary 2nd command!  |"); // 2
-            printf("| QUIT        = log out (teminate control con.)  |"); // 1
-            printf("| PORT        = server -> client data con.       |"); // 7
-            printf("| PASV        = client -> server data con.       |"); // 0
-            printf("| RETR        = retrieve last specified file by  |"); // 1
-            printf("| STOR        = send a file to server            |"); // 2
-            printf("| NOOP        = server will send OK code & msg   |"); // 1
-            printf("| TYPE        = ASCII N(on-print)/Image (bits)   |"); // 3
-            printf("+------------------------------------------------+");
+        printf("+------------------------------------------------+");
+        printf("| USER string = log in - necessary 1st command!  |"); // 2
+        printf("| PASS string = log in - necessary 2nd command!  |"); // 2
+        printf("| QUIT        = log out (teminate control con.)  |"); // 1
+        printf("| PORT        = server -> client data con.       |"); // 7
+        printf("| PASV        = client -> server data con.       |"); // 0
+        printf("| RETR        = retrieve last specified file by  |"); // 1
+        printf("| STOR        = send a file to server            |"); // 2
+        printf("| NOOP        = server will send OK code & msg   |"); // 1
+        printf("| TYPE        = ASCII N(on-print)/Image (bits)   |"); // 3
+        printf("+------------------------------------------------+");
 
-            // transmission mode - stream indikuje EOF jako ukonceni konekce, dalsi soubor musi na dalsi konekci, ale pozor toto muzeme delat, jenom kdyz mame tu socket adresu muzeme reusovat a ze se nema cekat na ten TCP delay
-            // kdyz se ukonci TCP socket, tak se jeste TIME_WAIT chvilku bude cekat nez prijde ACK od druheho hosta, aby oba vedeli, ze ta konekce bude ukoncena
-            printf("\nDATA STRUCTURE      = file-structure (contiguous bits)");
-            // transmission mode definovano takhle, protoze kdyby to bylo block, tak to by odpovidalo TCP s Nagle algorithm a stream by bylo TCP bez Nagle algorithm => jakoby nonblocking
-            printf("\nTRANSMISSION MODE   = stream (with Nagle algortithm - TCP segments will wait for data to be as full)");
-            printf("\nDATA REPRESENTATION = ASCII Non-print (only ASCII chars)/Image (bit data)");
+        // transmission mode - stream indikuje EOF jako ukonceni konekce, dalsi soubor musi na dalsi konekci, ale pozor toto muzeme delat, jenom kdyz mame tu socket adresu muzeme reusovat a ze se nema cekat na ten TCP delay
+        // kdyz se ukonci TCP socket, tak se jeste TIME_WAIT chvilku bude cekat nez prijde ACK od druheho hosta, aby oba vedeli, ze ta konekce bude ukoncena
+        printf("\nDATA STRUCTURE      = file-structure (contiguous bits)");
+        // transmission mode definovano takhle, protoze kdyby to bylo block, tak to by odpovidalo TCP s Nagle algorithm a stream by bylo TCP bez Nagle algorithm => jakoby nonblocking
+        printf("\nTRANSMISSION MODE   = stream (with Nagle algortithm - TCP segments will wait for data to be as full)");
+        printf("\nDATA REPRESENTATION = ASCII Non-print (only ASCII chars)/Image (bit data)");
 
-            scanf("Name: %97[^\n]", non_terminated_request); // %99[^\n] chceme cist maximalne 99 charakteru, protoze +1 pro \0 a chceme cist vsechny charaktery nez nenarazime na \n, potom uz to nechceme cist a nebudeme to cist \n, mezera mezi " a % znamena, ze chceme ignorovat kazdy whitespace v stdout bufferu (vsechny znaky, ktere kdyz vyprintujeme, tak proste nemaji ten normalni charakter)
-            // control_send_ftp(bufevent_control);
-            int resolution1 = partial_login_lookup(non_terminated_request, 0); // 0 - username, 1 = password
+        scanf("Name: %97[^\n]", non_terminated_request); // %99[^\n] chceme cist maximalne 99 charakteru, protoze +1 pro \0 a chceme cist vsechny charaktery nez nenarazime na \n, potom uz to nechceme cist a nebudeme to cist \n, mezera mezi " a % znamena, ze chceme ignorovat kazdy whitespace v stdout bufferu (vsechny znaky, ktere kdyz vyprintujeme, tak proste nemaji ten normalni charakter)
+        // control_send_ftp(bufevent_control);
+        int resolution1 = partial_login_lookup(non_terminated_request, 0); // 0 - username, 1 = password
 
-            user_request = insert_crlf(non_terminated_request);
-            if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
-                perror("mq_send() selhal - control_send_ftp");
-                exit(EXIT_FAILURE);
-            }
-            zero_memory(user_request);
-            zero_memory(non_terminated_request);
+        user_request = insert_crlf(non_terminated_request);
+        if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
+            perror("mq_send() selhal - control_send_ftp");
+            exit(EXIT_FAILURE);
+        }
+        zero_memory(user_request);
+        zero_memory(non_terminated_request);
 
 
-            scanf("Password: %97[^\n]", non_terminated_request);
-            int resolution2 = partial_login_lookup(non_terminated_request, 1);
+        scanf("Password: %97[^\n]", non_terminated_request);
+        int resolution2 = partial_login_lookup(non_terminated_request, 1);
 
-            user_request = insert_crlf(non_terminated_request);
-            // control_send_ftp(bufevent_control);
-            if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
-                perror("mq_send() selhal - control_send_ftp");
-                exit(EXIT_FAILURE);
-            }
-            zero_memory(user_request);
-            zero_memory(non_terminated_request);
-            // tento socket bude blocking, protoze budeme vzdy cekat na odpoved od serveru
-            // nedela nic specialniho; pokud bude false, tak se to ukonci; nedela nic specialniho
+        user_request = insert_crlf(non_terminated_request);
+        // control_send_ftp(bufevent_control);
+        if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
+            perror("mq_send() selhal - control_send_ftp");
+            exit(EXIT_FAILURE);
+        }
+        zero_memory(user_request);
+        zero_memory(non_terminated_request);
+        // tento socket bude blocking, protoze budeme vzdy cekat na odpoved od serveru
+        // nedela nic specialniho; pokud bude false, tak se to ukonci; nedela nic specialniho
 
-            if (resolution1 == 0 && resolution2 == 0) {
-                printf("230 - User logged in, proceed");
-                printf("220 -    Service ready for new user");
-            }
-            else if (resolution1 == 0 || resolution2 == 0) {
-                printf("430 - Invalid username or password");
-            }
-            else {
-                printf("535 - Failed security check");
-            }
+        if (resolution1 == 0 && resolution2 == 0) {
+            printf("230 - User logged in, proceed");
+            printf("220 -    Service ready for new user");
 
-            /*
-            printf("425 - Can't open data connection");
-            printf("501 - Syntax error in parameter or arguments");
-            */
-
-            introduction = 1;
+            break;
+        }
+        else if (resolution1 == 0 || resolution2 == 0) {
+            printf("430 - Invalid username or password");
         }
         else {
-            break;
+            printf("535 - Failed security check");
         }
     }
 
@@ -1278,17 +1322,6 @@ void *entering_commands(void *arg) {
     case USER_LOGGEDIN:
         continue; // nemusi byt break, protoze se rovnou skoci na dalsi iteraci toho for loopu (udelala by se i kdyztak inkrementace u toho for loopu)
     */
-}
-
-void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
-    char *command_reply = (char *)malloc(BUFEVENT_DATA_LEN);
-    memset(command_reply, 0, QUEUE_MESSAGE_LEN);
-
-    if ( bufferevent_read(bufevent_control, command_reply, BUFEVENT_DATA_LEN) == 0) {
-        perror("bufferevent_read() selhal - bufevent_read_cb_control (bud 0 Bytes, nebo se vyskitl error)");
-        exit(EXIT_FAILURE);
-    }
-    printf("\n%s", command_reply);
 }
 
 void *setup_con_buf() {
@@ -1333,11 +1366,10 @@ void *setup_con_buf() {
         exit(EXIT_FAILURE);
     }
 
-    bufevent_data = bufferevent_socket_new(evbase_data, ftp)
-
+    void (*bufevent_event_both)(struct bufferevent *bufevent_both, short events, void *ptr_arg) = bufevent_event_cb_both;
     void (*bufevent_write_control)(struct bufferevent *bufevent_control, void *ptr_arg) = bufevent_write_cb_control;
     void (*bufevent_read_control)(struct bufferevent *bufevent_control, void *ptr_arg) = bufevent_read_cb_control;
-    bufferevent_setcb(bufevent_control, bufevent_read_control, bufevent_write_control, NULL, NULL); // 1. NULL => eventcb, 2. NULL => pointer, ktery se preda vsem callbackum
+    bufferevent_setcb(bufevent_control, bufevent_read_control, bufevent_write_control, bufevent_event_both, NULL); // 1. NULL => eventcb, 2. NULL => pointer, ktery se preda vsem callbackum
     bufferevent_enable(bufevent_control, EV_READ | EV_WRITE); // event base pro bufferevent
 
     event_base_loop(evbase_control, EVLOOP_NO_EXIT_ON_EMPTY);
