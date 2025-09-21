@@ -33,6 +33,7 @@
 #define MAX_LEN 256
 #define STDIN 0
 #define NFDS 4 // number of file descriptors
+#define CONTROL_QUEUE_NAME "/control_queue"
 int num = 1;
 int QUEUE_MESSAGE_LEN = 256;
 int BUFEVENT_DATA_LEN = 512;
@@ -106,8 +107,8 @@ struct Node_Linked_List *root_node;
 char *root_node_path;
 
 struct Ftp_Sockets {
-    int ftp_control_socket;
-    int ftp_control_com;
+    // int ftp_control_socket;
+    int ftp_control_com; // client ma jenom jeden socket na komunikacis
     int ftp_data_socket;
     int ftp_data_com;
 };
@@ -137,7 +138,7 @@ enum Ftp_Data_Representation {
     ASCII = 0,
     IMAGE = 1,
 };
-enum Ftp_data_Representation ftp_data_representation = ASCII;
+enum Ftp_Data_Representation ftp_data_representation = ASCII;
 
 struct Ftp_User_Info {
     char *name_info;
@@ -1088,66 +1089,69 @@ void handle_command_function(char *command) {
         ftp_user_info.name_info = NULL;
         close(ftp_sockets_obj.ftp_data_com);
     }
-    else if (strstr("PORT", command) != NULL) {
-        // pro klienta
-        unsigned char *byte_field_address = (unsigned char *)&server_control_info.sin_addr.s_addr; // nova promenna Bytes na memory adresu, kde je ulozeno 4 Bytes
+    else if (strstr("PORT", command) != NULL || strstr("PASV", command) != NULL) { // connection part
+        if (strstr("PORT", command) != NULL) {
+            // pro klienta
+            unsigned char *byte_field_address = (unsigned char *)&server_control_info.sin_addr.s_addr; // nova promenna Bytes na memory adresu, kde je ulozeno 4 Bytes
 
-        int st_byte_addr = byte_field_address[0];
-        int nd_byte_addr = byte_field_address[1];
-        int rd_byte_addr = byte_field_address[2];
-        int fth_byte_addr = byte_field_address[3];
+            int st_byte_addr = byte_field_address[0];
+            int nd_byte_addr = byte_field_address[1];
+            int rd_byte_addr = byte_field_address[2];
+            int fth_byte_addr = byte_field_address[3];
 
-        // PORT = server se pripojuje na clienta (data)
-        // PASV = client se pripojuje na server (data)
+            // PORT = server se pripojuje na clienta (data)
+            // PASV = client se pripojuje na server (data)
 
-        unsigned char *byte_field_port = (unsigned char *)&server_control_info.sin_port;
+            unsigned char *byte_field_port = (unsigned char *)&server_control_info.sin_port;
 
-        int st_byte_port = byte_field_port[0];
-        int nd_byte_port = byte_field_port[1];
+            int st_byte_port = byte_field_port[0];
+            int nd_byte_port = byte_field_port[1];
 
-        printf("\nPORT %d,%d,%d,%d,%d,%d", st_byte_addr, nd_byte_addr, rd_byte_addr, fth_byte_addr, st_byte_port, nd_byte_port);
+            printf("\nPORT %d,%d,%d,%d,%d,%d", st_byte_addr, nd_byte_addr, rd_byte_addr, fth_byte_addr, st_byte_port, nd_byte_port);
 
-        char *port_command = (char *)malloc(20);
-        memset(port_command, 0, 20);
-        snprintf(port_command, 20, "PORT %d,%d,%d,%d,%d,%d", st_byte_addr, nd_byte_addr, rd_byte_addr, fth_byte_addr, st_byte_port, nd_byte_port);
+            char *port_command = (char *)malloc(20);
+            memset(port_command, 0, 20);
+            snprintf(port_command, 20, "PORT %d,%d,%d,%d,%d,%d", st_byte_addr, nd_byte_addr, rd_byte_addr, fth_byte_addr, st_byte_port, nd_byte_port);
 
-        if ( mq_send(control_queue, port_command, strlen(port_command) + 1, 31) == -1) {
-            perror("mq_send() selhal - handle_command_function - PORT");
-            exit(EXIT_FAILURE);
-        }
+            if ( mq_send(control_queue, port_command, strlen(port_command) + 1, 31) == -1) {
+                perror("mq_send() selhal - handle_command_function - PORT");
+                exit(EXIT_FAILURE);
+            }
 
-        if (listen(ftp_sockets_obj.ftp_data_socket, BACKLOG) == -1) {
-            perror("listen() selhal - handle_command_function");
-            exit(EXIT_FAILURE);
-        }
+            if (listen(ftp_sockets_obj.ftp_data_socket, BACKLOG) == -1) {
+                perror("listen() selhal - handle_command_function");
+                exit(EXIT_FAILURE);
+            }
 
-        int ftp_data_com;
-        if ((ftp_data_com = accept(ftp_sockets_obj.ftp_data_socket, NULL, NULL)) == -1) {
-            perror("accept() selhal - handle_command_function");
-            exit(EXIT_FAILURE);
-        }
-        ftp_sockets_obj.ftp_data_com = ftp_data_com;
-
-        printf("\n%s, connection established", port_command);
-    }
-    else if (strstr("PASV", command) != NULL) {
-        if (!ftp_user_info.loggedin_info) {
-            int ftp_data_com = connect(ftp_sockets_obj.ftp_data_socket, (const struct sockadrr *)&server_data_info.sin_addr.s_addr, sizeof(unsigned int)); // 127.0.0.1:21 => port 21 = data connection
-            if (ftp_data_com == -1) {
-                perror("connect() selhal - handle_command_function");
+            int ftp_data_com;
+            if ((ftp_data_com = accept(ftp_sockets_obj.ftp_data_socket, NULL, NULL)) == -1) {
+                perror("accept() selhal - handle_command_function");
                 exit(EXIT_FAILURE);
             }
             ftp_sockets_obj.ftp_data_com = ftp_data_com;
+
+            printf("\n%s, connection established", port_command);
         }
-        else {
-            if (errno == 0) {
-                fprintf(stderr, "530 - Not logged in");
+        else if (strstr("PASV", command) != NULL) {
+              if (!ftp_user_info.loggedin_info) {
+                int ftp_data_com = connect(ftp_sockets_obj.ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(server_data_info)); // 127.0.0.1:21 => port 21 = data connection
+                if (ftp_data_com == -1) {
+                    perror("connect() selhal - handle_command_function");
+                    exit(EXIT_FAILURE);
+                }
+                ftp_sockets_obj.ftp_data_com = ftp_data_com;
             }
             else {
-                perror("nekde se naskytl error - handle_command_function - PASV");
-                exit(EXIT_FAILURE);
-            }
-        }       
+                if (errno == 0) {
+                    fprintf(stderr, "530 - Not logged in");
+                }
+                else {
+                    perror("nekde se naskytl error - handle_command_function - PASV");
+                    exit(EXIT_FAILURE);
+                }
+            }  
+        }
+        
     }
     else if (strstr("TYPE", command) != NULL) {
         if (strstr("IMAGE", command) != NULL) {
@@ -1325,6 +1329,24 @@ void *entering_commands(void *arg) {
 }
 
 void *setup_con_buf() {
+    printf("\n\nsetup_con_buf");
+
+    // pokazde kdyz se client pripoji, tak dostane novy nahodny port od OS, proto musi server udelat setsockopt SO_REUSABLE, protoze server nemenni port a binduje
+    // ten stejny
+    // client zahajuje control connection u FTP, potom se muze rozhoudnout, jestli zahaji server nebo client data connection
+    int ftp_control_com; // vytvori se jakoby zakladni socket descriptor popisujici, ze bude komunikace pres sit a potom pomoci connect
+    // se klientovi priradi ten nahodny ephemeral port a ten socket descriptor se jakoby zmeni na communication socket descriptor
+    // socket take zalozi interni strukturu o tomto pripojeni
+    if ( (ftp_control_com = socket(server_control_info.sin_family, SOCK_STREAM, 0)) == -1 ) { // type => SOCK_STREAM znazi jaky typ socketu to bude => pouzivajici TCP (bytes streams) nebo UDP (datagrams)
+        perror("socket selhal() - ftp_control");
+        exit(EXIT_FAILURE);
+    }
+    ftp_sockets_obj.ftp_control_com = ftp_control_com;
+    // 0 => OS vybere nejlepsi protokol pro ty specifikace, jinak ty protokoly jsou definovane v glibc netine/in.h
+
+
+
+
     // client nemusi mit setsockopt SO_REUSEADDR, protoze se binduje k nejakemu stanovemu portu, client ma svuj lokalni port, takze se vzdycky zmeni
    
    /*
@@ -1333,17 +1355,25 @@ void *setup_con_buf() {
    */
 
     // u connect to musi byt oboustranne dane zavorkami, protoze == ma vetsi prioritu nez =
-    int ftp_control_com;
     // (**) se z toho stane struktura, (**) je dereference jako (*(*ptr))
     // blocking, protoze client zacina control connection
-    if ( (ftp_control_com = connect(ftp_sockets_obj.ftp_control_socket, (struct sockaddr *)&server_control_info, sizeof(server_control_info) )) == -1 ) { // () meni poradi operandu
+    if ( connect(ftp_sockets_obj.ftp_control_com, (struct sockaddr *)&server_control_info, sizeof(server_control_info) ) == -1 ) { // () meni poradi operandu
         perror("connect() selhal - setup_con_buf");
         exit(EXIT_FAILURE);
     }
-    ftp_sockets_obj.ftp_control_com = ftp_control_com;
+
+    // struct mq_attr ma;
+    // ma.mq_flags = 0;
+    // ma.mq_maxmsg = 16;
+    // ma.mq_msgsize = sizeof(int)
+    // ma.mq_curmsgs = 0;
 
     mqd_t control_queue;
-    if ( (control_queue = mq_open("/control_queue", O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID, NULL)) == -1) { // 4777
+    char errstr[50] = {0};
+    if ( (control_queue = mq_open(CONTROL_QUEUE_NAME, O_CREAT | O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID, NULL)) == -1) { // 4777
+        strerror_r(errno, errstr, 50);
+        printf("\n%s\n");
+        fflush(stdout);
         perror("mq_open() selhal - setup_con_buf");
         exit(EXIT_FAILURE);
     }
@@ -1361,8 +1391,10 @@ void *setup_con_buf() {
     }
 
     bufevent_control = bufferevent_socket_new(evbase_control, ftp_control_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS);
+    printf("\n\n%p %d", (void *)bufevent_control, ftp_control_com);
+    fflush(stdout);
     if (bufevent_control == NULL) {
-        perror("buffervent_socket_new() selhal - setup_con_buf");
+        fprintf(stderr, "buffervent_socket_new() selhal - setup_con_buf");
         exit(EXIT_FAILURE);
     }
 
@@ -1380,11 +1412,13 @@ int main() {
     clock_t start;
     start = clock(); // counting tics from the start of this process
 
-    struct sockaddr_in server_control_info;
+    memset(&server_data_info, 0, sizeof(server_data_info));
     memset(&server_control_info, 0, sizeof(struct sockaddr_in)); // ujisteni, ze struiktura je opravdu prazdna, bez garbage values, v struct adrrinfo bych diky 
     //tomu nastavit protokol TCP!
     server_control_info.sin_family = AF_INET;
     server_control_info.sin_port = htons(CONTROL_PORT); // htons => host to network short
+    server_data_info.sin_family = AF_INET;
+    server_data_info.sin_port = htons(DATA_PORT);
     // pokud je datovy typ nejaky typ pole nebo struktura, union apod., TAK TO MUSIM ZKOPIROVAT DO TOHO a nejde to jenom priradit!!
     // naplneni hints.sin_addr
     if (inet_pton(server_control_info.sin_family, "127.0.0.1", &server_control_info.sin_addr.s_addr) <= 0) { // pred a po hints.sin_addr nemusi byt ty zavorky a povazuji se za nadbytecne
@@ -1392,17 +1426,20 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    // pokazde kdyz se client pripoji, tak dostane novy nahodny port od OS, proto musi server udelat setsockopt SO_REUSABLE, protoze server nemenni port a binduje
-    // ten stejny
-    // client zahajuje control connection u FTP, potom se muze rozhoudnout, jestli zahaji server nebo client data connection
-    int ftp_control_socket; // vytvori se jakoby zakladni socket descriptor popisujici, ze bude komunikace pres sit a potom pomoci connect
-    // se klientovi priradi ten nahodny ephemeral port a ten socket descriptor se jakoby zmeni na communication socket descriptor
-    // socket take zalozi interni strukturu o tomto pripojeni
-    if ( (ftp_control_socket = socket(server_control_info.sin_family, SOCK_STREAM, 0)) == -1 ) { // type => SOCK_STREAM znazi jaky typ socketu to bude => pouzivajici TCP (bytes streams) nebo UDP (datagrams)
-        perror("socket selhal() - ftp_control");
+    // "muze se do davat rovnou do te struktury, protoze ma jen jednoho clena a tam se kopiruji ty data a zrovna to vyjde na tu delku, ale kdyby tam byly dva cleny, tak je lepsi tam uvest samotneho clena te struktury", takhle je to napsane v serveru, ale tady to je to explicitne napsane, coz je best practice
+    if (inet_pton(server_data_info.sin_family, "127.0.0.1", &server_data_info.sin_addr.s_addr) == 0) {
+        perror("inet_pton selhal() - ftp_data");
         exit(EXIT_FAILURE);
     }
-    // 0 => OS vybere nejlepsi protokol pro ty specifikace, jinak ty protokoly jsou definovane v glibc netine/in.h
+
+    
+
+    int ftp_data_socket;
+    if ( (ftp_data_socket = socket(server_data_info.sin_family, SOCK_STREAM, 0)) == -1) {
+        perror("socket() selhal - ftp_data");
+        exit(EXIT_FAILURE);
+    }
+    ftp_sockets_obj.ftp_data_com = ftp_data_socket;
 
     // control_connection((void *)&control_args);
     
@@ -1430,18 +1467,7 @@ int main() {
     return EXIT_SUCCESS;
 }
 /*
-// // "muze se do davat rovnou do te struktury, protoze ma jen jednoho clena a tam se kopiruji ty data a zrovna to vyjde na tu delku, ale kdyby tam byly dva cleny, tak je lepsi tam uvest samotneho clena te struktury", takhle je to napsane v serveru, ale tady to je to explicitne napsane, coz je best practice
-// if (inet_pton(server_data_info.sin_family, "127.0.0.1", &server_data_info.sin_addr.s_addr) == 0) {
-//     perror("inet_pton selhal() - ftp_data");
-//     exit(EXIT_FAILURE);
-// }
 
-
-int ftp_data_socket;
-if ( (ftp_data_socket = socket(server_data_info.sin_family, SOCK_STREAM, 0)) == -1) {
-    perror("socket() selhal - ftp_data");
-    exit(EXIT_FAILURE);
-}
 
 
 struct Data_Args data_args = { .ftp_d_socket = ftp_data_socket, .server_d_info = &server_data_info};

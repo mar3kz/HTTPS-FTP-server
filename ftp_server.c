@@ -1381,21 +1381,21 @@ void *select_ftp() {
 
     fd_set readbitmask;
     FD_ZERO(&readbitmask);
-
     FD_SET(ftp_sockets_obj.ftp_control_socket, &readbitmask);
 
     // read, write, exception
     // kousek na tom socketu prijme, kousek na tom socketu zapise, moc se nedeje, je to exception treba out of band data u TCP
     int nfds = ftp_sockets_obj.ftp_data_socket > ftp_sockets_obj.ftp_control_socket ? ftp_sockets_obj.ftp_data_socket : ftp_sockets_obj.ftp_control_socket;
     nfds++;
-    int rv = select(nfds, &readbitmask, NULL, NULL, &timeout);
+    int rv = select(50, &readbitmask, NULL, NULL, &timeout);
     
-    printf("%d", rv);
+    printf("\n%d", rv);
     fflush(stdout);
     // select vraci total pocet vsech file desciptoru, ktere jsou volne na operaci (v ramci daneho fd_setu)
     // pokud se tento if statement nestane, tak ono prijde SYN => SYN queue, odesle se SYN + ACK => client je touto dobou uz pripojeny, posle ACK, ted je server pripojeny, ale je to pripojene jenom na kernel level, protoze server neudelal accept()! => z tohoto muze byt velky problem => SYN flood, connection pool flooding => DoS
     // atomicka operace je ta, ktera bezi bez preruseni
     if (rv == 1) {
+        printf("\n\ntady ted je ftp_socket_obj.ftp_control_socket ready");
         // proces ma 4 nejhlavnejsi identity => RUID (Real U - user ID), EUID (Effective UID), RGID (Real group id), EGID (Effective group id), nejhlavnejsi jsou ale RUID a EUID, AUID => je cislo, ktere se priradi userovi kdyz se prihlasi a pokazde kdyz ten user spusti nejaky program, tak ten proces zdedi tento AUID => audit user ID
         // pokud bude mode jiny nez ma samotny soubor, tak se to rozhodne podle implemetance UNIX/Linux, nase implementace bude mit permise 4777 -> man mq_open
         mqd_t control_message_queue = mq_open("/control_queue", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO, S_ISUID, NULL); // 4777 -> /name pokud bude tady nekde mq_open se stejnou hodnotou, tak se to odkazuje na tu stejnou mqueue
@@ -1409,7 +1409,7 @@ void *select_ftp() {
         void *(*handle_ftp_p)(void *) = &handle_ftp_connections;
         if ( (thread_control = (pthread_create(&thread_control, NULL, handle_ftp_p, NULL)) ) !=  0) {
             perror("pthread_create() selhal - select_ftp");
-            exit(EXIT_FAILURE);
+            // exit(EXIT_FAILURE);
         }
 
         // ftp_sockets_p->ftp_data_com = accept(ftp_sockets_p->ftp_data_socket, NULL, NULL);
@@ -1419,7 +1419,7 @@ void *select_ftp() {
     }
     else {
         printf("\n\n\n\nnestalo se\n\n\n\n");
-        exit(EXIT_FAILURE);
+        // exit(EXIT_FAILURE);
     }
 }
 
@@ -1530,9 +1530,9 @@ int main()
         perror("bind() selhal - ftp_control");
         exit(EXIT_FAILURE);
     }
-    if ( bind( ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(struct sockaddr)) == -1) {
-        perror("bind() selhal - ftp_data");
-    }
+    // if ( bind( ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(struct sockaddr)) == -1) {
+    //     perror("bind() selhal - ftp_data");
+    // }
 
     // clock_t time = clock() / CLOCKS_PER_SEC;
 
@@ -1540,10 +1540,10 @@ int main()
         perror("listen() selhal - ftp_control");
         exit(EXIT_FAILURE);
     }
-    if ( listen(ftp_data_socket, BACKLOG) == -1) {
-        perror("listen() selhal - ftp_data");
-        exit(EXIT_FAILURE);
-    }
+    // if ( listen(ftp_data_socket, BACKLOG) == -1) {
+    //     perror("listen() selhal - ftp_data");
+    //     exit(EXIT_FAILURE);
+    // }
 
     ftp_sockets_obj.ftp_control_socket = ftp_control_socket;
     ftp_sockets_obj.ftp_control_com = -1;
@@ -1556,8 +1556,6 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-    int ftp_control_com = ftp_sockets_obj.ftp_control_com;
-    int ftp_data_com = ftp_sockets_obj.ftp_data_com;
     // je potreba toto udelat pro vice konekci, ted je to jen pro jednu
     // int ftp_control_com;
     // int ftp_data_com;
@@ -1656,19 +1654,26 @@ int main()
         printf("\n\nAVE CHRISTUS REX\n\n");
         fflush(stdout);
         int httpcomsocket = accept(http_socket, (struct sockaddr *)&httpclient_info, &httpclient_infolen);
-
+        if (httpcomsocket == -1) {
+            perror("accept() selhal - http");
+            exit(EXIT_FAILURE);
+        }
         // int *array = mallo()..., tak to pole se sklada z normalnich intu, ktere jsou ulozene na heapu hned za sebou, proto treba u realloc() se ukazuje na novou
         // memory lokaci, aby to bylo hezky za sebou, ALE my dostaneme POINTER ns tuto memory oblast, coz JE POINTER na int! 
         // ale pro ukladani muzeme jenom specifikovat ten pointer, nejaky offset a samotnou int hodnotu, protoze to je pole plne normalmich hodnot int
         COMARRAY[CONNECTION] = httpcomsocket;
 
         if (COMARRAY[CONNECTION] != httpcomsocket) {
+            printf("comarray");
+            fflush(stdout);
             fprintf(stderr, "prirazovani hodnoty do pole COMARRAY nebylo uspesne");
             handle_error();
         }
 
         CONNECTIONS_ARRAY[CONNECTION] = SSL_new(ctx); // vytvori novou SSL strukturu, ktera v sobe drzi real time informace o pripojeni, pouziva malloc!
         if (CONNECTIONS_ARRAY[CONNECTION] == NULL) {
+            printf("connections_array");
+            fflush(stdout);
             handle_error();
         }
 
@@ -1676,10 +1681,7 @@ int main()
 
         printf("\n\n\n\n\n\n\n\nnovy userrrrr\n\n\n\n");
         fflush(stdout);
-        if (httpcomsocket == -1) {
-            perror("accept() selhal - http");
-            return EXIT_FAILURE;
-        }
+        
         
         // int one = 1;
         // ioctl(httpcomsocket, FIONBIO, &one);
