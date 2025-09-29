@@ -26,6 +26,7 @@
 #include <openssl/err.h>
 #include <mqueue.h>
 #include <errno.h>
+#include <signal.h>
 
 #define BACKLOG 5
 #define CONTROL_PORT 2100
@@ -33,7 +34,8 @@
 #define MAX_LEN 256
 #define STDIN 0
 #define NFDS 4 // number of file descriptors
-#define CONTROL_QUEUE_NAME "/control_queue"
+#define CONTROL_QUEUE_NAME "/control_queue_client"
+#define DATA_QUEUE_NAME "/data_queue_client"
 int num = 1;
 int QUEUE_MESSAGE_LEN = 256;
 int BUFEVENT_DATA_LEN = 512;
@@ -580,7 +582,9 @@ void fill_root_node(struct Node_Linked_List **root_node, char *path) {
 int partial_login_lookup(char *text, int username_password) {
     // 0 - username
     // 1 - password
-    FILE *fs = fopen("./TXT/account.txt", "r+");
+    printf("\n0 - username, 1 - password => %d, %s\n", username_password, text);
+
+    FILE *fs = fopen("./TXT/accounts.txt", "r+");
 
     if (fs == NULL) {
         perror("fopen() selhal - partial_login_lookup()");
@@ -596,20 +600,27 @@ int partial_login_lookup(char *text, int username_password) {
     size_t n = 0; // toto se automaticky updatuje
     ssize_t chars_read;
     while ( (chars_read = getline(&line, &n, fs)) != -1) {
-        char *line_separator = strstr(" ", line);
-        int line_separator_i = (int)(line_separator - line);
-
+        char *line_separator = strstr(line, " ");
+        if (line_separator == NULL) {
+            perror("strstr() selhal - partial_login_lookup");
+            exit(EXIT_FAILURE);
+        }
         int len_line = strlen(line) - 1; // strlen(line) je i s \n a bez \0
-        memcpy(account_info[0], line, line_separator_i - 1); // username
+
+        int line_separator_i = (int)(line_separator - line);        
+        memcpy(account_info[0], line, line_separator_i); // username
         memcpy(account_info[1], line + line_separator_i + 1, len_line - (line_separator_i + 1)); // password
 
+        printf("username_password: %d, account_info[0] = %s, account_info[1] = %s", username_password, account_info[0], account_info[1]);
         switch(username_password) {
-            case 0:    
+            case 0: 
                 if (strcmp(account_info[0], text) == 0) {
+                    printf("\n\nusername\n\n");
                     return 0;
                 }
             case 1:
-                if ( strcmp(account_info[1], text) == 0) {
+                if (strcmp(account_info[1], text) == 0) {
+                    printf("\n\npassword\n\n");
                     return 0;
                 }
             default:
@@ -762,7 +773,9 @@ static int ftp_dtp() {
 }
 
 void zero_memory(char *ptr_memory_address) {
-    memset(ptr_memory_address, sizeof(char) * 100, 0);
+    // printf("\ndela se neco?");
+    // protoze je C jazyk, kde se davaji veci by value, tak to znamena, pri predani funkci urciteho pointeru, tak se udela kopie a do te see ulozita hodnota a kdyz se udela pointer = nova_vec, tak se to zmeni jenom lokalne, ale pokud se udela dereference (zmena hodnoty na urcite memory adrese), tak se to promeni globalne, jako treba pointer->neco = nova_nec se udela globalne, protoze -> je defaultne dereference
+    memset(ptr_memory_address, 0, sizeof(char) * 100);
 }
 
 void send_ftp_code(char *message, int ftp_control_com) {
@@ -823,7 +836,7 @@ char *read_contents_ftp(char *path) {
 
 void data_send_ftp(struct bufferevent *bufevent_data) {
     mqd_t data_queue;
-    if ( data_queue = mq_open("/data_queue", O_RDWR) == -1) {
+    if ( data_queue = mq_open(DATA_QUEUE_NAME, O_RDWR) == -1) {
         perror("mq_open() selhal - data_send_ftp");
         exit(EXIT_FAILURE);
     }
@@ -844,7 +857,7 @@ void data_send_ftp(struct bufferevent *bufevent_data) {
 
 void control_send_ftp(struct bufferevent *bufevent_control) {
     mqd_t control_queue;
-    if (mq_open("/control_queue", O_RDWR) == -1) {
+    if (mq_open(DATA_QUEUE_NAME, O_RDWR) == -1) {
         perror("mq_open() selhal - control_send_ftp");
         exit(EXIT_FAILURE);
     }
@@ -867,8 +880,65 @@ void reset_bufevent_data_len() {
     BUFEVENT_DATA_LEN = 512;
 }
 
+int is_command_ok(char *command_user) {
+    // USER
+    // PASS
+    // QUIT - nepotrebuje nic kontrolovat
+    // PORT
+    // PASV - nepotrebuje nic kontrolovat
+    // RETR
+    // STOR
+    // NOOP - nepotrebuje nic kontrolovat
+    // TYPE - nepotrebuje nic kontrolovat
+
+    char *space = strstr(command_user, " ");
+    if (space == NULL) {
+        fprintf(stderr, "strstr() selhal - nenasel space - command pravdepodobne spatne formatovan - is_command_ok - USER\n");
+        exit(EXIT_FAILURE);
+    }
+    int space_i = (int)(space - command_user);
+
+    if ( strstr(command_user, "USER") != NULL) {
+        if (isalpha(command_user[++space_i]) && isalpha(command_user[++space_i]) ) {
+            return 1;
+        }
+        return 0;
+    }
+    else if ( strstr(command_user, "PASS") != NULL) {
+        for (int i = ++space_i; i < strlen(command_user) + 1; i++) {
+            if (!isalpha(command_user[i]) || !isdigit(command_user[i]) || !ispunct(command_user[i]) ) {
+                return 0;
+            }
+        }
+    }
+    else if ( strstr(command_user, "PORT") != NULL) {
+        int space_index = space_i + 1;
+
+        for (int i = 0; i < 5; i++) {
+            char *temp_finding;
+            if ((temp_finding = strstr(command_user + space_index, "/")) == NULL ) {
+                return 0;
+            }
+            space_index = (int)(temp_finding - command_user) + 1;
+        }
+    }
+    else if ( strstr(command_user, "RETR") != NULL) {
+        if (strstr(command_user, "/") != NULL || strstr(command_user, ".") != NULL) {
+            return 1;
+        }
+        return 0;
+    }
+    else if ( strstr(command_user, "STOR") != NULL) {
+        if (strstr(command_user, "/") != NULL || strstr(command_user, ".") != NULL) {
+            return 1;
+        }
+        return 0;
+    }
+    return 1;
+}
+
 void send_ftp_commands(struct bufferevent *bufevent_control) {
-    mqd_t control_queue = mq_open("/control_queue", O_RDWR);
+    mqd_t control_queue = mq_open(CONTROL_QUEUE_NAME, O_RDWR);
     if (control_queue == -1) {
         perror("mq_open() selhal - bufevent_write_cb_control");
         exit(EXIT_FAILURE);
@@ -925,8 +995,8 @@ void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_ar
             exit(EXIT_FAILURE);
         }
         else if (bytes_now == 0) {
-            
-            if (strstr("\r\n", command_buf_to_recv) != NULL) {
+            printf("\n\n%s", command_buf_to_recv);
+            if (strstr(command_buf_to_recv, "\r\n") != NULL) {
                 printf("\nvse precteno");
                 printf("\n%s", command_buf_to_recv);
                 break;
@@ -942,14 +1012,13 @@ void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_ar
 }
 
 void bufevent_write_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
-    printf("\nall data sent");
+    printf("\nall data sent\n");
 }
-
 
 void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
     reset_bufevent_data_len();
 
-    mqd_t control_queue = mq_open("/control_queue", O_RDWR);
+    mqd_t control_queue = mq_open(CONTROL_QUEUE_NAME, O_RDWR);
     if (control_queue == -1) {
         perror("mq_open() selhal - bufevent_read_cb_data");
         exit(EXIT_FAILURE);
@@ -968,7 +1037,7 @@ void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
     }
     
 
-    mqd_t data_queue = mq_open("/data_queue", O_RDWR);
+    mqd_t data_queue = mq_open(DATA_QUEUE_NAME, O_RDWR);
     if (data_queue == -1) {
         perror("mq_open() selhal - bufevent_read_cb_data");
         exit(EXIT_FAILURE);
@@ -1048,9 +1117,10 @@ char *extract_path_command(char *command) {
 }
 
 char *insert_crlf(char *command) {
-    command[strlen(command)] = 0xd; // \r
-    command[strlen(command) + 1] = 0xa; // \n
-    command[strlen(command) + 2] = '\0'; // aby to vzdy koncilo <crlf>NULL char
+    // zero_memory nefunguje tak, jak ma
+    command[strlen(command)] = '\r'; // \r
+    command[strlen(command)] = '\n'; // \n, strlen(command) + 1 je spatne, protoze pridanim \r se zvetsi ta velikost toho command
+    command[strlen(command)] = '\0'; // aby to vzdy koncilo <crlf>NULL char
 
     return command;
 }
@@ -1072,25 +1142,33 @@ void handle_command_function(char *command) {
     TYPE
     */
 
+    // printf("\n\ncommand: %s", command);
+    fflush(stdout);
     int control_queue_count = 0, data_queue_count = 0;
     mqd_t control_queue;
     if (control_queue_count == 0) {
-        control_queue = mq_open("/control_queue", O_RDWR);
+        control_queue = mq_open(CONTROL_QUEUE_NAME, O_RDWR);
         if (control_queue == -1) {
             perror("mq_open() selhal - handle_command_function");
             exit(EXIT_FAILURE);
         }
         control_queue_count++;
-    }  
+    }
 
-    if (strstr("QUIT", command) != NULL) {
+    if (strstr(command, "QUIT") != NULL) {
+        puts("200 - command okay");
         ftp_user_info.loggedin_info = 0;
         // nutnost usera zadat nove jmeno
         ftp_user_info.name_info = NULL;
         close(ftp_sockets_obj.ftp_data_com);
     }
-    else if (strstr("PORT", command) != NULL || strstr("PASV", command) != NULL) { // connection part
-        if (strstr("PORT", command) != NULL) {
+    else if (strstr(command, "PORT") != NULL || strstr(command, "PASV") != NULL) { // connection part
+        if (strstr(command, "PORT") != NULL) {
+            if (is_command_ok(command) == 1) {
+                fprintf(stderr, "PORT command ma spatny format", command);
+                exit(EXIT_FAILURE);
+            }
+
             // pro klienta
             unsigned char *byte_field_address = (unsigned char *)&server_control_info.sin_addr.s_addr; // nova promenna Bytes na memory adresu, kde je ulozeno 4 Bytes
 
@@ -1132,14 +1210,13 @@ void handle_command_function(char *command) {
 
             printf("\n%s, connection established", port_command);
         }
-        else if (strstr("PASV", command) != NULL) {
-              if (!ftp_user_info.loggedin_info) {
-                int ftp_data_com = connect(ftp_sockets_obj.ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(server_data_info)); // 127.0.0.1:21 => port 21 = data connection
-                if (ftp_data_com == -1) {
+        else if (strstr(command, "PASV") != NULL) {            
+            if (!ftp_user_info.loggedin_info) {
+                int connect_rv = connect(ftp_sockets_obj.ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(server_data_info)); // 127.0.0.1:21 => port 21 = data connection
+                if (connect_rv == -1) {
                     perror("connect() selhal - handle_command_function");
                     exit(EXIT_FAILURE);
                 }
-                ftp_sockets_obj.ftp_data_com = ftp_data_com;
             }
             else {
                 if (errno == 0) {
@@ -1150,29 +1227,42 @@ void handle_command_function(char *command) {
                     exit(EXIT_FAILURE);
                 }
             }  
-        }
-        
+        } 
     }
-    else if (strstr("TYPE", command) != NULL) {
-        if (strstr("IMAGE", command) != NULL) {
+    else if (strstr(command, "TYPE") != NULL) {
+        if (strstr(command, "IMAGE") != NULL) {
+            puts("200 - command okay");
             ftp_user_info.ftp_data_representation = IMAGE;
         }
         else {
+            puts("504 - Command not implemented for that parameter - no change");
             ftp_user_info.ftp_data_representation = ASCII;
         }
     }
-    else if (strstr("RETR", command) != NULL || strstr("STOR", command) != NULL && ftp_user_info.loggedin_info == 1) { // tady se otevre datova message queue
+    else if (strstr(command, "NOOP") != NULL) {
+        puts("200 - command okay");
+        if (mq_send(control_queue, command, strlen(command) + 1, 31) == -1) {
+            perror("mq_send() selhal - handle_command_function - NOOP");
+            exit(EXIT_FAILURE);
+        }
+        send_ftp_commands(bufevent_control); // send to the server
+        // puts("NOOP tady je\n");
+    }
+    else if (strstr(command, "RETR") != NULL || strstr(command, "STOR") != NULL && ftp_user_info.loggedin_info == 1) { // tady se otevre datova message queue
         mqd_t data_queue;
         if (data_queue_count == 0 && ftp_sockets_obj.ftp_data_com != -1) {
-            data_queue = mq_open("/data_queue", O_CREAT | O_RDWR, S_IRWXU | S_IRWXO | S_IRWXG | S_ISUID); // 4777
+            data_queue = mq_open(DATA_QUEUE_NAME, O_CREAT | O_RDWR, S_IRWXU | S_IRWXO | S_IRWXG | S_ISUID, NULL); // 4777
             if (data_queue == -1) {
                 perror("mq_open() selhal - handle_command_function");
                 exit(EXIT_FAILURE);
             }
             data_queue_count++;
 
-            bufevent_data = bufferevent_socket_new(evbase_data, ftp_sockets_obj.ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS);
-            
+            bufevent_data = bufferevent_socket_new(evbase_data, ftp_sockets_obj.ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE); // BEV_OPT_UNLOCK_CALLBACKS - toto chce defaultne dereffered callbacks
+            if (bufevent_data == NULL) {
+                perror("bufevent_data selhal - handle_command_function");
+                exit(EXIT_FAILURE);
+            }
             void (*bufevent_event_both)(struct bufferevent *bufevent_both, short events, void *ptr_arg) = bufevent_event_cb_both;
             void (*bufevent_write_data)(struct bufferevent *bufevent_data, void *ptr_arg) = bufevent_write_cb_data;
             void (*bufevent_read_data)(struct bufferevent *bufevent_data, void *ptr_arg) = bufevent_read_cb_data;
@@ -1186,9 +1276,13 @@ void handle_command_function(char *command) {
                 perror("pthread_create() selhal - handle_command_function - RETR");
                 exit(EXIT_FAILURE);
             }
-        }
-              
-        if (strstr("RETR", command) != NULL) {
+        } 
+        if (strstr(command, "RETR") != NULL) {
+            if (is_command_ok(command) == 1) {
+                fprintf(stderr, "%s ma spatny format", command);
+                exit(EXIT_FAILURE);
+            }
+            
             // retr
             char *path = extract_path_command(command);
 
@@ -1197,8 +1291,12 @@ void handle_command_function(char *command) {
                 exit(EXIT_FAILURE);
             }
         }
-        
-        if (strstr("STOR", command) != NULL) {
+        if (strstr(command, "STOR") != NULL) {
+            if (is_command_ok(command) == 1) {
+                fprintf(stderr, "%s ma spatny format", command);
+                exit(EXIT_FAILURE);
+            }
+
             char *path = extract_path_command(command);
 
             if ( mq_send(data_queue, path, strlen(path) + 1, 31) == -1) {
@@ -1214,7 +1312,8 @@ void handle_command_function(char *command) {
             exit(EXIT_FAILURE);
         }
         else {
-            fprintf(stderr, "zadany command nepotrebuje explicitni funkci nebo nejste prihlaseni a chcete pouzit command s data pripojenim");
+            fprintf(stderr, "zadany command nepotrebuje explicitni funkci nebo nejste prihlaseni a chcete pouzit command s data pripojenim\n");
+            fflush(stdout);
         }        
     }
 }
@@ -1225,48 +1324,60 @@ void *entering_commands(void *arg) {
     zero_memory(non_terminated_request); // automaticky NULL terminated
     zero_memory(non_terminated_request);
 
-    mqd_t control_queue = mq_open("/control_queue", O_RDWR);
+    // struct mq_attr ma;
+    // ma.mq_flags = 0;
+    // ma.mq_maxmsg = 16;
+    // ma.mq_msgsize = 50;
+    // ma.mq_curmsgs = 0;
+
+
+    mqd_t control_queue = mq_open(CONTROL_QUEUE_NAME, O_CREAT | O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID, NULL); // pokud jeste ta queue neni vytvorena, tak to bude blokovat 
     if (control_queue == -1) {
         perror("mq_open() selhal - control_send_ftp");
         exit(EXIT_FAILURE);
     }
+    struct mq_attr attr;
+    mq_getattr(control_queue, &attr);
+    printf("\n\n tady jsou ty udaje: %ld %ld %ld %ld", attr.mq_curmsgs, attr.mq_msgsize, attr.mq_curmsgs, attr.mq_flags); // mozna nejake threads chteji otevrit stejnou frontu => blokuji ji?
+    fflush(stdout);
 
     int introduction = 0;
     while(1) {
-        printf("+-----------------------------------------+");
-        printf("| AVE CHRISTUS REX FTP server implements: |");
-        printf("|                                         |");
-        printf("| DATA REPRESENTATION: ASCII NONPRINT (N) |");
-        printf("| TRANSMISSION MODE  : STREAM             |");
-        printf("| DATA STRUCTURE     : FILE-STRUCTURE     |");
-        printf("| COMMANDS: USER, PASS, QUIT, PORT, PASV  |");
-        printf("|           RETR, STOR, NOOP, TYPE        |");
-        printf("+-----------------------------------------+");
+        puts("+-----------------------------------------+");
+        puts("| AVE CHRISTUS REX FTP server implements: |");
+        puts("|                                         |");
+        puts("| DATA REPRESENTATION: ASCII NONPRINT (N) |");
+        puts("| TRANSMISSION MODE  : STREAM             |");
+        puts("| DATA STRUCTURE     : FILE-STRUCTURE     |");
+        puts("| COMMANDS: USER, PASS, QUIT, PORT, PASV  |");
+        puts("|           RETR, STOR, NOOP, TYPE        |");
+        puts("+-----------------------------------------+");
 
-        printf("+------------------------------------------------+");
-        printf("| USER string = log in - necessary 1st command!  |"); // 2
-        printf("| PASS string = log in - necessary 2nd command!  |"); // 2
-        printf("| QUIT        = log out (teminate control con.)  |"); // 1
-        printf("| PORT        = server -> client data con.       |"); // 7
-        printf("| PASV        = client -> server data con.       |"); // 0
-        printf("| RETR        = retrieve last specified file by  |"); // 1
-        printf("| STOR        = send a file to server            |"); // 2
-        printf("| NOOP        = server will send OK code & msg   |"); // 1
-        printf("| TYPE        = ASCII N(on-print)/Image (bits)   |"); // 3
-        printf("+------------------------------------------------+");
+        puts("+------------------------------------------------+");
+        puts("| USER string = log in - necessary 1st command!  |"); // 2
+        puts("| PASS string = log in - necessary 2nd command!  |"); // 2
+        puts("| QUIT        = log out (teminate control con.)  |"); // 1
+        puts("| PORT        = server -> client data con.       |"); // 7
+        puts("| PASV        = client -> server data con.       |"); // 0
+        puts("| RETR        = retrieve last specified file by  |"); // 1
+        puts("| STOR        = send a file to server            |"); // 2
+        puts("| NOOP        = server will send OK code & msg   |"); // 1
+        puts("| TYPE        = ASCII N(on-print)/Image (bits)   |"); // 3
+        puts("+------------------------------------------------+");
 
         // transmission mode - stream indikuje EOF jako ukonceni konekce, dalsi soubor musi na dalsi konekci, ale pozor toto muzeme delat, jenom kdyz mame tu socket adresu muzeme reusovat a ze se nema cekat na ten TCP delay
         // kdyz se ukonci TCP socket, tak se jeste TIME_WAIT chvilku bude cekat nez prijde ACK od druheho hosta, aby oba vedeli, ze ta konekce bude ukoncena
-        printf("\nDATA STRUCTURE      = file-structure (contiguous bits)");
+        puts("\nDATA STRUCTURE      = file-structure (contiguous bits)");
         // transmission mode definovano takhle, protoze kdyby to bylo block, tak to by odpovidalo TCP s Nagle algorithm a stream by bylo TCP bez Nagle algorithm => jakoby nonblocking
-        printf("\nTRANSMISSION MODE   = stream (with Nagle algortithm - TCP segments will wait for data to be as full)");
-        printf("\nDATA REPRESENTATION = ASCII Non-print (only ASCII chars)/Image (bit data)");
+        puts("TRANSMISSION MODE   = stream (with Nagle algortithm - TCP segments will wait for data to be as full)");
+        puts("DATA REPRESENTATION = ASCII Non-print (only ASCII chars)/Image (bit data)");
 
-        scanf("Name: %97[^\n]", non_terminated_request); // %99[^\n] chceme cist maximalne 99 charakteru, protoze +1 pro \0 a chceme cist vsechny charaktery nez nenarazime na \n, potom uz to nechceme cist a nebudeme to cist \n, mezera mezi " a % znamena, ze chceme ignorovat kazdy whitespace v stdout bufferu (vsechny znaky, ktere kdyz vyprintujeme, tak proste nemaji ten normalni charakter)
+        printf("Name: ");
+        scanf(" %97[^\n]", non_terminated_request); // %99[^\n] chceme cist maximalne 99 charakteru, protoze +1 pro \0 a chceme cist vsechny charaktery nez nenarazime na \n, potom uz to nechceme cist a nebudeme to cist \n, mezera mezi " a % znamena, ze chceme ignorovat kazdy whitespace v stdout bufferu (vsechny znaky, ktere kdyz vyprintujeme, tak proste nemaji ten normalni charakter)
         // control_send_ftp(bufevent_control);
         int resolution1 = partial_login_lookup(non_terminated_request, 0); // 0 - username, 1 = password
-
         user_request = insert_crlf(non_terminated_request);
+
         if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
             perror("mq_send() selhal - control_send_ftp");
             exit(EXIT_FAILURE);
@@ -1275,12 +1386,13 @@ void *entering_commands(void *arg) {
         zero_memory(non_terminated_request);
 
 
-        scanf("Password: %97[^\n]", non_terminated_request);
+        printf("Password: ");
+        scanf(" %97[^\n]", non_terminated_request);
         int resolution2 = partial_login_lookup(non_terminated_request, 1);
-
         user_request = insert_crlf(non_terminated_request);
         // control_send_ftp(bufevent_control);
-        if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
+
+        if ( mq_send(control_queue, user_request, 100, 31) == -1) { // strlen(user_request) + 1
             perror("mq_send() selhal - control_send_ftp");
             exit(EXIT_FAILURE);
         }
@@ -1290,16 +1402,15 @@ void *entering_commands(void *arg) {
         // nedela nic specialniho; pokud bude false, tak se to ukonci; nedela nic specialniho
 
         if (resolution1 == 0 && resolution2 == 0) {
-            printf("230 - User logged in, proceed");
-            printf("220 -    Service ready for new user");
-
+            puts("230 - User logged in, proceed");
+            puts("220 -    Service ready for new user");
             break;
         }
         else if (resolution1 == 0 || resolution2 == 0) {
-            printf("430 - Invalid username or password");
+            puts("430 - Invalid username or password");
         }
         else {
-            printf("535 - Failed security check");
+            puts("535 - Failed security check");
         }
     }
 
@@ -1309,17 +1420,21 @@ void *entering_commands(void *arg) {
 
     while (1) {
         // telnet commands jsou ukonceny <CRLF> 13, 10 a ftp code jsou terminated <space> 32
-        scanf("$ %99[^\n]", non_terminated_request);
+        printf("$ ");
+        fflush(stdout);
+        scanf(" %99[^\n]", non_terminated_request);
         user_request = insert_crlf(non_terminated_request);
+        // printf("\n\nuser_request: %s, non_terminated_request: %s", user_request, non_terminated_request);
+        // fflush(stdout);
         handle_command_function(user_request);
 
-        // if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
-        //     perror("mq_send() selhal - entering commands");
-        //     exit(EXIT_FAILURE);
-        // }
-        sleep(3);
-        zero_memory(non_terminated_request);
-        zero_memory(user_request);
+        // // if ( mq_send(control_queue, user_request, strlen(user_request) + 1, 31) == -1) {
+        // //     perror("mq_send() selhal - entering commands");
+        // //     exit(EXIT_FAILURE);
+        // // }
+        // //sleep(3);
+        // zero_memory(non_terminated_request);
+        // zero_memory(user_request);
     }
 
     /*
@@ -1330,6 +1445,7 @@ void *entering_commands(void *arg) {
 
 void *setup_con_buf() {
     printf("\n\nsetup_con_buf");
+    fflush(stdout);
 
     // pokazde kdyz se client pripoji, tak dostane novy nahodny port od OS, proto musi server udelat setsockopt SO_REUSABLE, protoze server nemenni port a binduje
     // ten stejny
@@ -1361,6 +1477,7 @@ void *setup_con_buf() {
         perror("connect() selhal - setup_con_buf");
         exit(EXIT_FAILURE);
     }
+    send(ftp_sockets_obj.ftp_control_com, "ahoj", 10, 0);
 
     // struct mq_attr ma;
     // ma.mq_flags = 0;
@@ -1390,7 +1507,7 @@ void *setup_con_buf() {
         exit(EXIT_FAILURE);
     }
 
-    bufevent_control = bufferevent_socket_new(evbase_control, ftp_control_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS);
+    bufevent_control = bufferevent_socket_new(evbase_control, ftp_control_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE); // BEV_OPT_UNLOCK_CALLBACKS
     printf("\n\n%p %d", (void *)bufevent_control, ftp_control_com);
     fflush(stdout);
     if (bufevent_control == NULL) {
@@ -1408,6 +1525,8 @@ void *setup_con_buf() {
 }
 
 int main() {
+    evthread_use_pthreads(); // abychom mohli pouzivat libevent s threads
+
     // clock_t => __kernel_long_t => long
     clock_t start;
     start = clock(); // counting tics from the start of this process
@@ -1446,18 +1565,24 @@ int main() {
     pthread_t thread_control, command_control; // ID of thread
     const pthread_attr_t thread_attributes;
 
-    void *(*setup_p)(void *) = setup_con_buf; // int, struct sockaddr **
+    void *(*setup_p)(void *) = &setup_con_buf; // int, struct sockaddr **
     if ( pthread_create(&thread_control, NULL, setup_p, NULL)) { // NULL je atribut pro atribut strukturu, ktera specifikuje urcite atributy nove vytvoreneho thread, jako scheduling policy, inherit scheduler
         perror("pthread_create() selhal - main() - thread_control");
         exit(EXIT_FAILURE);
     }
 
-    void *(*command_control_p)(void *) = entering_commands;
+    void *(*command_control_p)(void *) = &entering_commands;
     if ( pthread_create(&command_control, NULL, command_control_p, NULL)) {
         perror("pthread_create() selhal - main() - command_control");
         exit(EXIT_FAILURE);
     }
 
+    // pthread_exit(NULL);
+    // pthread_kill(pthread_self(), SIGSTOP);
+    // pokud skonci hlavni vlakno -> tak skonci cely program
+    while (1) {
+        // sleep(500);
+    }
 
     // data_connection(&data_args);
 

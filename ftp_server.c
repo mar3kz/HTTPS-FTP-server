@@ -24,9 +24,11 @@
 #include <event2/bufferevent.h>
 #include <mqueue.h> // pro komunikaci mezi procesy/threads
 #include <stdint.h> // uint32_t
-#include <mqueue.h> // komunikace mezi jeden thread
 #include <event2/thread.h>
 #include <event2/bufferevent_ssl.h>
+#include <event2/visibility.h>
+#include <event2/event-config.h>
+#include <event2/util.h>
 // event2, protoze to je novejsi verze, kdybych tam dal jenom event, tak
 // #include <event.h>
 //#include <openssl/ssl/ssl_local.h>
@@ -59,6 +61,8 @@ int BUFEVENT_DATA_LEN = 512;
 int CONNECTION = 0;
 #define CONTROL_PORT 2100
 #define DATA_PORT 2000
+#define CONTROL_QUEUE_NAME "/control_queue_server"
+#define DATA_QUEUE_NAME "/data_queue_server"
 
 struct response {
     char *content;
@@ -806,8 +810,8 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
     // tato queue je zpusob komunikace mezi control a data funkcemi, budeme posilat jakekoliv zpravy s mensi priority hodnotou nez posilani zprav s paths, ktere mame poslat, aby v queue byly na uplnem vrcholu a aby se nemuselo cekat nez se odesle zprava, protoze path > zprava (priorita)
     // zprava = 30, path = 31
 
-    mqd_t control_queue = mq_open("/control_queue", O_RDWR);
-    mqd_t data_queue = mq_open("/control_data", O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID | S_ISGID, NULL); // 6777
+    mqd_t control_queue = mq_open(CONTROL_QUEUE_NAME, O_RDWR);
+    mqd_t data_queue = mq_open(DATA_QUEUE_NAME, O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID | S_ISGID, NULL); // 6777
 
     if (control_queue == -1 || control_queue == -1){
         perror("mq_open() selhal - control_queue/data_queue - execute commands");
@@ -993,7 +997,7 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
             evbase_data = event_base_new(); // event_base nepotrebujeme, protoze event_base se pouziva na socket/buffer, kdyz je ready na read/write apod. ale bufferevent uz rovnou vola callbacky kdyz se prectou/zapisou data
 
             // protoze libevent drzi lock na vsechny buffereventy (mutex), tak pokud bychom chteli precist neco, na cem je lock, tak by ten thread cekal na to, nez se ten lock da pryc, to by se cekalo donekonecna => deadlock => proto BEV_OPT_UNLOCK_CALLBACKS
-            bufevent_data = bufferevent_socket_new(evbase_data, ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS);
+            bufevent_data = bufferevent_socket_new(evbase_data, ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE); // BEV_OPT_UNLOCK_CALLBACKS
 
             void (*bufevent_write_data)(struct bufferevent *bufevent_data, void *ptr_arg) = bufevent_write_cb_data; // v oficialni dokumentaci je misto void *ptr_arg void *ctx (context)
             void (*bufevent_read_data)(struct bufferevent *bufevent_data, void *ptr_arg) = bufevent_read_cb_data;
@@ -1041,7 +1045,7 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
             ftp_sockets_obj.ftp_data_com = ftp_data_com;
 
             evbase_data = event_base_new();
-            struct bufferevent *bufevent_data = bufferevent_socket_new(evbase_data, ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS);
+            struct bufferevent *bufevent_data = bufferevent_socket_new(evbase_data, ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE); // BEV_OPT_UNLOCK_CALLBACKS
 
             void (*bufevent_write_control)(struct bufferevent *bufevent_control, void *ptr_arg) = bufevent_write_cb_control;
             void (*bufevent_read_control)(struct bufferevent *bufevent_control, void *ptr_arg) = bufevent_read_cb_control;
@@ -1188,7 +1192,7 @@ void control_send_ftp(struct bufferevent *bufevent_control) {
             }
             break;
         case 1: // true
-            mqd_t control_queue = mq_open("/control_queue", O_RDONLY); // otevirani queue pro odesilani FTP responses
+            mqd_t control_queue = mq_open(CONTROL_QUEUE_NAME, O_RDONLY); // otevirani queue pro odesilani FTP responses
 
             if (control_queue == -1) {
                 perror("mq_open() selhal - bufevent_write_cb_control");
@@ -1256,7 +1260,7 @@ void bufevent_event_cb_both(struct bufferevent *bufevent_both, short events, voi
 }
 
 void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
-    mqd_t data_queue = mq_open("/data_queue", O_RDONLY);
+    mqd_t data_queue = mq_open(DATA_QUEUE_NAME, O_RDONLY);
 
     if (data_queue == -1) {
         perror("mq_open() selhal - bufevent_read_cb_data");
@@ -1289,7 +1293,7 @@ void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
 void data_send_ftp(struct bufferevent *bufevent_data) {
     // pokud chceme poslat soubor tak    read cb_c => write cb_c => write cb_d
     // pokud chceme prijmout souvor, tak read cb_c => write cb_c => read cb_d
-    mqd_t data_queue = mq_open("/data_queue", O_RDONLY);
+    mqd_t data_queue = mq_open(DATA_QUEUE_NAME, O_RDONLY);
 
     if (data_queue == -1) {
         perror("mq_open() selhal - bufevent_write_cb_data");
@@ -1341,13 +1345,16 @@ void *handle_ftp_connections() {
     // ftp_sockets_p->control_or_data = CONTROL;
 
     struct event_base *evbase_control = event_base_new(); // default settings
-
     if (evbase_control == NULL) {
         perror("event_base_new() selhal - data_connection");
         exit(EXIT_FAILURE);
     }
 
-    struct bufferevent *bufevent_control = bufferevent_socket_new(evbase_control, ftp_sockets_obj.ftp_control_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE | BEV_OPT_UNLOCK_CALLBACKS); // thread safe
+    struct bufferevent *bufevent_control = bufferevent_socket_new(evbase_control, -1, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE); // thread safe // BEV_OPT_UNLOCK_CALLBACKS
+    if (bufevent_control == NULL) {
+        perror("bufferevent_socket_new() selhal - handle_ftp_connections");
+        exit(EXIT_FAILURE);
+    }
 
     void (*bufevent_write_control)(struct bufferevent *bufevent_control, void *ptr_arg) = bufevent_write_cb_control;
     void (*bufevent_read_control)(struct bufferevent *bufevent_control, void *ptr_arg) = bufevent_read_cb_control;
@@ -1367,6 +1374,11 @@ void *handle_ftp_connections() {
 }
 
 void *select_ftp() {
+    evthread_use_pthreads(); // abychom mohli pouzivat libevent s threads
+    
+
+
+
     // accept ma uz zabudovany pocet file descriptoru, ktere obslouzi, a to je 1024, je to pole typu long, kde kazdy bit je jeden file descriptor => bit. 256 => file descriptor 256
     // na jeden long je to 64 bitu (8 Bytes) => 1024 / 64 = 16, vetsinou tato maska je 16 Bytes velka
     
@@ -1398,19 +1410,23 @@ void *select_ftp() {
         printf("\n\ntady ted je ftp_socket_obj.ftp_control_socket ready");
         // proces ma 4 nejhlavnejsi identity => RUID (Real U - user ID), EUID (Effective UID), RGID (Real group id), EGID (Effective group id), nejhlavnejsi jsou ale RUID a EUID, AUID => je cislo, ktere se priradi userovi kdyz se prihlasi a pokazde kdyz ten user spusti nejaky program, tak ten proces zdedi tento AUID => audit user ID
         // pokud bude mode jiny nez ma samotny soubor, tak se to rozhodne podle implemetance UNIX/Linux, nase implementace bude mit permise 4777 -> man mq_open
-        mqd_t control_message_queue = mq_open("/control_queue", O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO, S_ISUID, NULL); // 4777 -> /name pokud bude tady nekde mq_open se stejnou hodnotou, tak se to odkazuje na tu stejnou mqueue
+        mqd_t control_message_queue = mq_open(CONTROL_QUEUE_NAME, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO, S_ISUID, NULL); // 4777 -> /name pokud bude tady nekde mq_open se stejnou hodnotou, tak se to odkazuje na tu stejnou mqueue
         printf("\n\n\nANO, JE TO VSE OK\n\n\n\n\n");
         fflush(stdout);
 
         ftp_sockets_obj.ftp_data_com = -1;
         ftp_sockets_obj.ftp_control_com = accept(ftp_sockets_obj.ftp_control_socket, NULL, NULL);
-
+        char temp_buf[10];
+        snprintf(temp_buf, 10, "%s%c%c", "ahoj", 0x0d, 0x0a);
+        send(ftp_sockets_obj.ftp_control_com, temp_buf, 10, 0);
+        printf("\n\n\npo accept, ftp_cotnrol com: %d\n\n\n\n\n", ftp_sockets_obj.ftp_control_com);
         pthread_t thread_control;
         void *(*handle_ftp_p)(void *) = &handle_ftp_connections;
         if ( (thread_control = (pthread_create(&thread_control, NULL, handle_ftp_p, NULL)) ) !=  0) {
             perror("pthread_create() selhal - select_ftp");
             // exit(EXIT_FAILURE);
         }
+        printf("\n\n\npo pthread_create\n\n\n\n\n");
 
         // ftp_sockets_p->ftp_data_com = accept(ftp_sockets_p->ftp_data_socket, NULL, NULL);
         // printf(":%d :%d", ftp_sockets_p->ftp_control_com, ftp_sockets_p->ftp_data_com);
@@ -1564,6 +1580,18 @@ int main()
 
     //     ftp_data_com = accept(ftp_data_socket, NULL, NULL);
     // }
+
+
+
+    while (1) {
+
+    }
+
+
+
+
+
+
 
 
 
