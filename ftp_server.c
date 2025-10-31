@@ -34,6 +34,18 @@
 #include <stdarg.h>
 #include <event2/buffer.h>
 #include <sys/time.h>
+
+// !!
+// kdy pouzivat setsockopt()?
+// protoze volani na funkci socket() vrati descriptor na table file struct file, coz odkazuje na struct sock v kernel memory (toto se vse vytvori), kde jsou veskere informace o tom pripojeni jako port, IP adresa, recv and write buffer apod.
+// kdyz skonci proces, vsechny ty descriptory se uzavrou ALE kernel si pamatuje jeste asi 60-120s (2 * Maximum Segment Life - MSL - cas kdyz data od TCP - segment - muze byt "zivy" a povazovan za relevantni, potom se da pouze ignorovat), je to proto, kdyby behem cesty nastaly nejake problemy, tak aby to mohlo dorazit, a tento socket je nastaven do TIME-WAIT a pokud se nekdo chce pripojit na ten socket, endpoint aby to bylo presnejsi IP:port, tak to vyhodi error Transport endpoint is already connected!!
+
+// staci delat jenom ty sockety, na ktere se user ma pripojit, listen sockety
+// SO_REUSEADDR je pro znovupouzivani adres (IP adresa:port)
+// SO_REUSEPORT je pro vice procesu pouzivani stejneho portu => load balancing
+
+// !!
+
 // event2, protoze to je novejsi verze, kdybych tam dal jenom event, tak
 // #include <event.h>
 //#include <openssl/ssl/ssl_local.h>
@@ -131,16 +143,19 @@ typedef struct Ftp_User_Info {
     char *password;
     char *last_path;
     
-    int user_loggedin;
+    int user_loggedin; // 1 = TRUE, 0 = FALSE
     Ftp_Data_Repre data_represantation;
 
     int data_connection_sd;
     int data_connection_port;
 } Ftp_User_Info;
 struct Ftp_User_Info ftp_user_info = {.username = NULL, .password = NULL, .last_path = NULL, .user_loggedin = 0, .data_represantation = ASCII, .data_connection_sd = -1, .data_connection_port = -1}; // defaultni nastaveni uctu
-struct event_base *evbase_data;
-struct bufferevent *bufevent_data;
 
+struct event_base *evbase_data;
+struct event_base *evbase_control;
+struct bufferevent *bufevent_data;
+struct bufferevent *bufevent_control;
+struct linger so_linger = {.l_onoff = 1, .l_linger = 3}; // pocka se az se poslou vsechny datam, 3 sekundy
 
 // struct Handling_response_struct {
     // int httpcomsocket;
@@ -191,10 +206,8 @@ struct Ftp_Sockets {
     int ftp_control_com;
     int ftp_data_socket;
     int ftp_data_com;
-
-    enum Ftp_Type type;
 };
-struct Ftp_Sockets ftp_sockets_obj = {.type = CONTROL};
+struct Ftp_Sockets ftp_sockets_obj = {.ftp_control_socket = -1, .ftp_control_com = -1, .ftp_data_socket = -1, .ftp_data_com = -1};
 
 struct mq_attr attributes = {
         .mq_flags = O_NONBLOCK, // tady muze byt jenom O_NONBLOCK
@@ -247,7 +260,10 @@ void bufevent_write_cb_data(struct bufferevent *bufevent_data, void *ptr_arg);
 void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg);
 void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_arg);
 void bufevent_write_cb_control(struct bufferevent *bufevent_control, void *ptr_arg);
-void bufevent_event_cb_both(struct bufferevent *bufevent_both, short events, void *ptr_arg);
+void bufevent_event_cb_data(struct bufferevent *bufevent_both, short events, void *ptr_arg);
+void bufevent_event_cb_control(struct bufferevent *bufevent_both, short events, void *ptr_arg);
+char *insert_crlf(char *response);
+char *read_contents_ftp(char *path);
 
 // ~ NOT, | OR, ^ XOR, & AND, >> right shift, << left shift
 
@@ -451,6 +467,22 @@ void cb(SSL *CONNECTION, int where, int ret) {
 //     outlen = length_protocol; // TATO 2 SE PREMENI NA BINARNI KOD, POKUD BYCHOM TO DALI DO '', TAK SE JE TO ASCII REPREZENTACE => PORAD BINARNI KOD, ALE JINY NEZ TEN ZAMYSLENY BINARNI KOD!!
 // }
 
+struct timeval timeout_data;
+struct timeval timeout_control;
+
+void reset_timeval_struct_control (evutil_socket_t fd, short what, void *arg) {
+    timeout_control.tv_sec = 5;
+    timeout_control.tv_usec = 0;
+
+    printf("\n\n\n\nHALOO\n\n");
+    fflush(stdout);
+}
+
+void reset_timeval_struct_data (evutil_socket_t fd, short what, void *arg) {
+    timeout_data.tv_sec = 3;
+    timeout_data.tv_usec = 0;
+}
+
 void *wrapper_handling_response(void *arg) {
     // invalid type of argument of unary `*` => snazim se dereferencovat neco co neni typu yyy * (neco, co neni ukazatel)
     // & give me address of!
@@ -579,7 +611,58 @@ void DumpHex(const void* data, size_t size) {
 	}
 }
 
-void signal_handler() {
+void data_send_ftp(struct bufferevent *bufevent_data, char *data_to_send) {
+    // pokud chceme poslat soubor tak    read cb_c => write cb_c => write cb_d
+    // pokud chceme prijmout souvor, tak read cb_c => write cb_c => read cb_d
+    // mqd_t data_queue = mq_open(DATA_QUEUE_NAME, O_RDONLY);
+
+    // if (data_queue == -1) {
+    //     perror("mq_open() selhal - bufevent_write_cb_data");
+    //     exit(EXIT_FAILURE);
+    //     // AVE CHRISTUS REX!
+    // }
+
+    // char *path_to_send = (char *)malloc(QUEUE_MESSAGE_LEN);
+    // if ( mq_receive(data_queue, path_to_send, QUEUE_MESSAGE_LEN, NULL) == -1) {
+    //     perror("mq_receive() selhal - bufevent_write_cb_data");
+    //     exit(EXIT_FAILURE);
+    // }
+    // // ted mame path AVE CHRISTUS REX!!
+
+    // struct stat temp_struct;
+    // if (stat(path_to_send, &temp_struct) == -1) {
+    //     perror("stat() selhal - bufevent_write_cb_data");
+    //     exit(EXIT_FAILURE);
+    // }
+    // int path_len = temp_struct.st_size;
+
+    // char *data_to_send = read_contents_ftp(path_to_send);
+    printf("\n\n\n\n\n\n\n\n\n\nDATA_SEND_FTP");
+    fflush(stdout);
+    size_t path_len = strlen(data_to_send); // BEZ +1, PROTOZE FILES NEMAJI NULL TERMINATOR
+    if ( bufferevent_write(bufevent_data, data_to_send, path_len) == -1) { // + 1 pro \0, protoze 1 char file => @ Bytes => 3 Bytes pro \0
+        perror("bufferevent_write() selhal - bufevent_write_cb_data");
+        exit(EXIT_FAILURE);
+    }
+    printf("\n\n\n\n\n\n\n\n\n\nDATA_SEND_FTP");
+    fflush(stdout);
+}
+
+void signal_handler(int signal_value) {
+    if (bufevent_control == NULL) {
+        puts("bufevent_control je prazdny");
+        _exit(EXIT_FAILURE);
+    }
+    if (bufferevent_write(bufevent_control, "!END!", strlen("!END!") + 1) == -1) {
+        _exit(EXIT_FAILURE);
+    }
+    bufferevent_write(bufevent_control, "!END!", strlen("!END!") + 1);
+
+    close(ftp_sockets_obj.ftp_data_com);
+    close(ftp_sockets_obj.ftp_data_socket);
+    close(ftp_sockets_obj.ftp_control_socket);
+    close(ftp_sockets_obj.ftp_control_com);
+    _exit(EXIT_FAILURE);
 }
 
 // static void ftp_pi(struct Ftp_Sockets *arg) {
@@ -645,22 +728,68 @@ void signal_handler() {
 // PORT = ACTIVE DATA CONNECTION
 // PASV = PASSIVE DATA CONNECTION
 
-void send_server_st_reply(int ftp_control_com) {
+void send_conformation_account(struct bufferevent *bufevent_control, int yay_or_nay) {
+    switch (yay_or_nay) {
+        case 0:
+            {
+            char buf[] = "200 - command okay";
+            char *buf_to_send = insert_crlf(buf);
 
+            if (bufferevent_write(bufevent_control, buf_to_send, strlen(buf_to_send) + 1) == -1) {
+                perror("bufferevent_write() selhal - send_conformation_account");
+                exit(EXIT_FAILURE);
+            }
+            break;
+            }
+        case 1:
+            {
+            char buf2[] = "530 - Not logged in";
+            char *buf_to_send = insert_crlf(buf2);
+
+            if (bufferevent_write(bufevent_control, buf_to_send, strlen(buf_to_send) + 1) == -1) {
+                perror("bufferevent_write() selhal - send_conformation_account");
+                exit(EXIT_FAILURE);
+            }
+            break;
+            }
+        default:
+            {
+            fprintf(stderr, "\nhodnota nabyva zvlastni hodnoty - send_conformation_account()");
+            exit(EXIT_FAILURE);
+            }
+    }
 }
 
-int make_port_connection(uint32_t address, short int port) {
-    struct sockaddr_in client_addr_port;
+// void make_port_connection(struct sockaddr_in *client_struct) {
+//     // switch(client_struct->sin_family) {
+//     //     case AF_INET:
+//     //         printf("\nAF_INET family");
+//     //         break;
+//     //     default:
+//     //         printf("Lord Jesus Christ, Son of God, Word of God, have mercy on me, a sinner");
+//     //         break;
+//     // }
+//     // struct sockaddr temp_struct;
+//     // temp_struct.sa_family = AF_INET;
+//     // memcpy(&(temp_struct.sa_data), "127.0.0.1", strlen("127.0.0.1") + 1);
+//     // // temp_struct.sa_data = ;
 
-    client_addr_port.sin_family = AF_INET; // address family
-    client_addr_port.sin_port = port;
-    client_addr_port.sin_addr.s_addr = address;
+//     struct sockaddr_in temp_struct;
+//     temp_struct.sin_family = AF_INET;
+//     temp_struct.sin_port = htons(DATA_PORT);
 
-    int socket = connect(ftp_sockets_obj.ftp_data_socket, (struct sockaddr *)&client_addr_port, sizeof(struct sockaddr_in));
-    ftp_sockets_obj.ftp_data_com = socket;
 
-    return socket;
-}
+//     int connect_rv = connect(ftp_sockets_obj.ftp_data_socket, (struct sockaddr *)&temp_struct, sizeof(temp_struct));
+//     if (connect_rv != 0) {
+//         perror("connect() selhal - make_port_connection");
+//         printf("\n%s", strerror(errno));
+//         fflush(stdout);
+//         exit(EXIT_FAILURE);
+//     }
+//     ftp_sockets_obj.ftp_data_com = ftp_sockets_obj.ftp_data_socket;
+//     printf("HALOOOO\n");
+//     fflush(stdout);
+// }
 
 short int return_port(char **metadata_command) {
     short int port;
@@ -673,16 +802,73 @@ short int return_port(char **metadata_command) {
     return htons(port); // aby uz to bylo na network 
 }
 
-uint32_t return_address(char **metadata_command) {
-    uint32_t address;
-    unsigned char *address_array = (unsigned char *)malloc(4);
+char *get_address(char **metadata_command) {
+    char *address = (char *)malloc(INET_ADDRSTRLEN); // 16 bytes => IPv4 + \0
+    memset(address, 0, INET_ADDRSTRLEN);
+    size_t total_offset = 0, len = 0;
 
-    for (int i = 0, address_array_i = 0; i < 5; i++) {
-        memcpy(&address_array[address_array_i++], metadata_command[i], sizeof(unsigned char ) * 4);
+    for (int i = 0; i < 4; i++) {
+        // strcat pridava \0 na konec a overwrituje \0 uprostred stringu
+        len = strlen(metadata_command[i]) + 1; // pro .
+
+        strcat(address + total_offset, metadata_command[i]);
+        if (i == 3) {
+            return address;
+        }
+        strcat(address + total_offset + 1, ".");
+
+        total_offset = total_offset + len;
     }
-    memcpy(&address, address_array, sizeof(unsigned char ) * 4);
+}
 
-    return htons(address);
+void make_connection(char **metadata_command) {
+    // INADDR_ANY se pouziva v sin_addr.s_addr, protoze INADDR_ANY je definovano jako uint32_t, takze se to da do uint32_t
+    // inet_pton() se pouziva na strukturu, ktera opravdu drzi tu adresu, nic jineho (family, port, padding apod.), proto se musi pouzit ta samotna struktura => sin_addr.s_addr
+    // bind(), connect(), listen() apod., tyto funkce pracuji jako s celymi strukturami a ne jen s castmi tich struktur, proto to chce cely pointer na tu strukturu
+
+    if ((ftp_sockets_obj.ftp_data_socket = socket(server_data_info.sin_family, SOCK_STREAM, 0)) == -1) {
+        perror("socket() selhal - make_connection");
+        exit(EXIT_FAILURE);
+    }
+
+    char *address = get_address(metadata_command);
+    short int port = return_port(metadata_command);
+    printf("\n\n\n\n\n\n\n\nport: %d", port);
+    fflush(stdout); // JESUS IS GOD!
+
+    // vse ostatni uz nastaveno
+    server_data_info.sin_port = htons(port); // 2000
+
+    // stal se takovy error, ze transport endpoint is already connected, ale ten endpoint byl ephemeral port (ten random port, ktery priradi kernel) - to se zjistilo, ze jsem udelal nekolik connections a koukal se na to, jake porty se opakovaly v tich connections
+    // proto kdyz klient se pripojuje a dostane socket descriptoru od socket(), tak by se melo udelat setsockopt(), protoze kdyz server se pripojoval na klienta (PORT), tak server vyhodil error transport endpot is alreadu connected => client at fault 
+    // By default, the kernel will not reuse any in-use port for an ephemeral port, which may result in failures if you have 64K+ simultaneous ports in use.
+    
+    printf("\n\nftp_sockets_obj.ftp_data_socket: %d", ftp_sockets_obj.ftp_data_socket);
+    int yes = 1;
+    if ( setsockopt(ftp_sockets_obj.ftp_data_socket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) == -1) {
+        perror("setsockopt() selhal - make_connection - PORT");
+        exit(EXIT_FAILURE);
+    }
+    // printf("\n\npo setsockopt(), port na connect: %d, %s", port);
+    fflush(stdout);
+
+    if (inet_pton(server_data_info.sin_family, (const char *)address, (void *)&(server_data_info.sin_addr) ) == -1) { // mam pointer na struct, ktera ma v sobe objekty, proto musim udelat &
+        perror("inet_pton() selhal - make_connection");
+        exit(EXIT_FAILURE);
+    }
+
+    if (connect(ftp_sockets_obj.ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(struct sockaddr_in)) == -1) { // blocking operace
+        perror("connect() selhal - make_connection");
+        printf("\n%s", strerror(errno));
+        fflush(stdout);
+        exit(EXIT_FAILURE);
+    }
+    ftp_sockets_obj.ftp_data_com = ftp_sockets_obj.ftp_data_socket;
+
+    //  ftp_user_info.data_connection_sd = ftp_sockets_obj.ftp_data_com;
+    //         ftp_user_info.data_connection_port = port;
+    printf("HALOOOO\n");
+    fflush(stdout);
 }
 
 char **metadata_command(char *command) {
@@ -845,19 +1031,29 @@ int partial_login_lookup(char *text, int username_password) {
     return 1;
 }
 
+void *run_ev_base_loop(void *) {
+    event_base_loop(evbase_data, EVLOOP_NO_EXIT_ON_EMPTY);
+}
+
+mqd_t control_queue, data_queue;
+int control_queue_i = 0, data_queue_i = 0;
 void execute_commands(char *command, struct bufferevent *bufevent_control) {
     // tato queue je zpusob komunikace mezi control a data funkcemi, budeme posilat jakekoliv zpravy s mensi priority hodnotou nez posilani zprav s paths, ktere mame poslat, aby v queue byly na uplnem vrcholu a aby se nemuselo cekat nez se odesle zprava, protoze path > zprava (priorita)
     // zprava = 30, path = 31
 
-    mqd_t control_queue = mq_open(CONTROL_QUEUE_NAME, O_RDWR);
-    mqd_t data_queue = mq_open(DATA_QUEUE_NAME, O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID | S_ISGID, NULL); // 6777
+    if (control_queue_i == 0 && data_queue_i == 0) {
+        control_queue = mq_open(CONTROL_QUEUE_NAME, O_RDWR);
+        data_queue = mq_open(DATA_QUEUE_NAME, O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID | S_ISGID, NULL); // 6777
 
-    if (control_queue == -1 || control_queue == -1){
-        perror("mq_open() selhal - control_queue/data_queue - execute commands");
-        exit(EXIT_FAILURE);
+        if (control_queue == -1 || data_queue == -1){
+            perror("mq_open() selhal - control_queue/data_queue - execute commands");
+            exit(EXIT_FAILURE);
+        }
+        control_queue_i++;
+        data_queue_i++;
     }
-
-    char msg4[] = "501 - Syntax error in parameters or arguments";
+    
+    // char msg4[] = "501 - Syntax error in parameters or arguments";
     // const char msg2[] = "426 - Connection closed; transfer aborted";
 
     if (strstr(command, "USER") != NULL) {
@@ -929,6 +1125,7 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
         }
     }
     else if (strstr(command, "QUIT") != NULL) {
+
         char msg1[] = "221 - Service closing control connection. Logged out if appropriate";
 
         if ( mq_send(control_queue, msg1, strlen(msg1) + 1, 30) == -1) {
@@ -940,12 +1137,15 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
     }
     else if (strstr(command, "RETR") != NULL) { // CONTROL + DATA
 
-        char msg1[] = "250 - Requested file action was okay, completed)";
+        // exit(EXIT_FAILURE);
+        char msg1[] = "250 - Requested file action was okay, completed";
         char msg2[] = "530 - Not Logged in - can't send file";
         char msg3[] = "425 - Can't open data connection";
+        printf("\n\n\nftp_user_loggedin %d, data_connection_port: %d, data_connection_socket_descriptor: %d\n\n\n\n\n", ftp_user_info.user_loggedin, ftp_user_info.data_connection_sd, ftp_user_info.data_connection_port);
+        fflush(stdout);
 
         if (ftp_user_info.user_loggedin && ftp_user_info.data_connection_sd != -1 && ftp_user_info.data_connection_port != -1) { // OK
-            char *st_space = strstr(" ", command);
+            char *st_space = strstr(command, " ");
             int i_st_space = (int)(st_space - command);
 
             char *path = (char *)malloc(strlen(command) - i_st_space + 1);
@@ -962,10 +1162,15 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
             }
 
             // DATA
+            printf("\n\n\n\n\n\n\n\n\n\n\n\n%s", path);
+            fflush(stdout);
             if ( mq_send(data_queue, path, strlen(path) + 1, 30) == -1) {
                 perror("mq_send() selhal - execute commands - STOR - msg1");
                 exit(EXIT_FAILURE);
             }
+
+            char *contents = read_contents_ftp(path);
+            data_send_ftp(bufevent_data, contents);
         }
         else if (!ftp_user_info.user_loggedin) {
             if ( mq_send(control_queue, msg2, strlen(msg2) + 1, 30) == -1) { // not logged in
@@ -1022,26 +1227,35 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
     else if (strstr(command, "PORT") != NULL) {
         // send this information
 
-        if (!ftp_user_info.user_loggedin) {
+        if (ftp_user_info.user_loggedin) {
             char **array = metadata_command(command);
             // x1,x2,x3,x4,p1,p2
 
-            short int port = return_port(array);
-            uint32_t address = return_address(array);
-            int ftp_data_com = make_port_connection(address, port);
-
-            ftp_user_info.data_connection_sd = ftp_data_com;
-            ftp_user_info.data_connection_sd = port;
-
+            make_connection(array);
+            evutil_make_socket_nonblocking(ftp_sockets_obj.ftp_data_com);
+            // sock_struct->sin_port = htons(port); // nemuzu dat -1, to by se udelalo max cislo portu, jakoby overwrite
+           
+            // make_port_connection(address); // ftp_sockets_obj.ftp_data_com = ftp_sockets_obj.ftp_data_socket, protoze connect()
+            
             evbase_data = event_base_new(); // event_base nepotrebujeme, protoze event_base se pouziva na socket/buffer, kdyz je ready na read/write apod. ale bufferevent uz rovnou vola callbacky kdyz se prectou/zapisou data
+            timeout_data.tv_sec = 3;
+            timeout_data.tv_usec = 0;
+            struct event *event_timeout = event_new(evbase_data, ftp_sockets_obj.ftp_data_com, EV_TIMEOUT | EV_PERSIST, reset_timeval_struct_data, NULL);
+            event_add(event_timeout, &timeout_data);
+
+            // if (fcntl(ftp_sockets_obj.ftp_data_com, F_SETFL, O_NONBLOCK) == -1) { // musi byt nonblocking, aby se to mohlo dat do bufferevent_socket_new()
+            //     perror("fcntl() selhal - neslo nastavit O_NONBLOCK - handle_command_function");
+            //     exit(EXIT_FAILURE);
+            // }
+            
 
             // protoze libevent drzi lock na vsechny buffereventy (mutex), tak pokud bychom chteli precist neco, na cem je lock, tak by ten thread cekal na to, nez se ten lock da pryc, to by se cekalo donekonecna => deadlock => proto BEV_OPT_UNLOCK_CALLBACKS
-            bufevent_data = bufferevent_socket_new(evbase_data, ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE); // BEV_OPT_UNLOCK_CALLBACKS
+            bufevent_data = bufferevent_socket_new(evbase_data, ftp_sockets_obj.ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE); // BEV_OPT_UNLOCK_CALLBACKS
 
             void (*bufevent_write_data)(struct bufferevent *bufevent_data, void *ptr_arg) = &bufevent_write_cb_data; // v oficialni dokumentaci je misto void *ptr_arg void *ctx (context)
             void (*bufevent_read_data)(struct bufferevent *bufevent_data, void *ptr_arg) = &bufevent_read_cb_data;
-            void (*bufevent_event_both)(struct bufferevent *bufevent_data, short events, void *ptr_arg) = &bufevent_event_cb_both;
-            bufferevent_setcb(bufevent_data, bufevent_read_data, bufevent_write_data, bufevent_event_both, NULL);
+            void (*bufevent_event_data)(struct bufferevent *bufevent_data, short events, void *ptr_arg) = &bufevent_event_cb_data;
+            bufferevent_setcb(bufevent_data, bufevent_read_data, bufevent_write_data, bufevent_event_data, NULL);
             bufferevent_enable(bufevent_data, EV_READ | EV_WRITE); // nastavi eventy pro buffer event, write callback se zavola jenom po tom, co user zapise ty data
 
             char msg1[] = "200 - command okay";
@@ -1049,53 +1263,126 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
                 perror("mq_send() selhal - execute_commands");
                 exit(EXIT_FAILURE);
             }
-        }
-        char msg2[] = "125 - Data connection already open; trasfer starting";
-        if (mq_send(control_queue, msg2, strlen(msg2) + 1, 30) == -1) {
-                perror("mq_send() selhal - execute_commands");
+
+            pthread_t bufevent_data_base_thread;
+            if (pthread_create(&bufevent_data_base_thread, NULL, &run_ev_base_loop, NULL) != 0) {
+                perror("pthread_create() selhal - execute_command - PORT");
                 exit(EXIT_FAILURE);
+            }
+
+            if (pthread_detach(bufevent_data_base_thread) != 0) {
+                perror("pthread_detach() selhal - execute_command - PORT");
+                exit(EXIT_FAILURE);
+            }
         }
-         
+        char msg2[] = "125 - Data connection already open; transfer starting";
+        if (mq_send(control_queue, msg2, strlen(msg2) + 1, 30) == -1) {
+            perror("mq_send() selhal - execute_commands");
+            exit(EXIT_FAILURE);
+        }
         // ted kdyz jsme udelali data connection, tak musime nastavit bufferevent a event_loop na tomto socket descriptoru a ty callbacky, stejne u PASV
 
         // ("501 - Syntax error in parameters or arguments")
         // aktivni - data connection - server initiates
         
     }
-    else if (strstr(command, "PASV")) {
+    else if (strstr(command, "PASV") != NULL) {
+        printf("\nPASV execute commands, %d", ftp_user_info.user_loggedin);
+        fflush(stdout);
         // passive - client starts every connection, server listens
         // ("227 - Entering Passive Mode (h1,h2,h3,h4,p1,p2)")
-        if (!ftp_user_info.user_loggedin) {
-            if ( bind(ftp_sockets_obj.ftp_data_socket, (struct sockaddr *)&server_data_info.sin_addr.s_addr, 4) == -1){
-            perror("bind() selhal - execute commands");
-            exit(EXIT_FAILURE);
+        // if (ftp_sockets_obj.ftp_data_com == -1) {
+        //     char msg2[] = "125 - Data connection already open; transfer starting";
+        //     if (mq_send(control_queue, msg2, strlen(msg2) + 1, 30) == -1) {
+        //         perror("mq_send() selhal - execute_commands");
+        //         exit(EXIT_FAILURE);
+        //     }
+        // }
+        if (ftp_user_info.user_loggedin == 1) {
+            int yes = 1;
+
+            // int ftp_data_socket = socket(server_data_info.sin_family, SOCK_STREAM, 0);
+            // if (ftp_data_socket == -1) {
+            //     perror("socket selhal - ftp_data");
+            //     exit(EXIT_FAILURE);
+            // }
+
+            // int optvalftp3 = 1;
+            // int optvalftp4 = 1;
+            // if ( (setsockopt(ftp_data_socket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &optvalftp3, sizeof(int))) == -1 || (setsockopt(ftp_data_socket, IPPROTO_TCP, TCP_NODELAY, &optvalftp4, sizeof(int))) == -1) {
+            //     perror("setsockopt() selhal - ftp_data");
+            //     exit(EXIT_FAILURE);
+            // }
+
+            // if ( inet_pton(server_data_info.sin_family, "127.0.0.1", &server_data_info.sin_addr) <= 0) {
+            //     perror("inet_pton() selhal - ftp_data");
+            //     exit(EXIT_FAILURE);
+            // }
+            if ((ftp_sockets_obj.ftp_data_socket = socket(server_data_info.sin_family, SOCK_STREAM, 0)) == -1) {
+                perror("socket() selhal - execute_commands - PASV");
+                exit(EXIT_FAILURE);
             }
+
+            printf("\n\nftp_sockets_obj.ftp_data_socket: %d", ftp_sockets_obj.ftp_data_socket);
+            // setsockopt MUSI BYT pred bind(), listen(), accept(), connect(), PROTOZE TO MENI JAK SE TEN SOCKET BUDE CHOVAT
+            if ( (setsockopt(ftp_sockets_obj.ftp_data_socket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(int))) == -1) {
+                perror("setsockopt() selhal - execute command - PASV");
+                exit(EXIT_FAILURE);
+            }
+
+            if ( bind(ftp_sockets_obj.ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(server_data_info)) == -1) {
+                perror("bind() selhal - ftp_data");
+                exit(EXIT_FAILURE);
+            }
+
+            // pokud se to bude bindovat 2., tak to vrati error invalid argument
+            // if ( (bind(ftp_sockets_obj.ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(server_data_info))) == -1){
+            //     perror("bind() selhal - execute commands - PASV");
+            //     exit(EXIT_FAILURE);
+            // }
 
             if ( listen(ftp_sockets_obj.ftp_data_socket, BACKLOG) == -1) {
-                perror("listen() selhal - execute commands");
+                perror("listen() selhal - execute commands - PASV");
                 exit(EXIT_FAILURE);
             }
 
-            int ftp_data_com;
-            if ( ftp_data_com = (accept(ftp_sockets_obj.ftp_data_socket, NULL, NULL)) == -1) {
-                perror("accept() selhal - execute commands");
+            if ((ftp_sockets_obj.ftp_data_com = accept(ftp_sockets_obj.ftp_data_socket, NULL, NULL)) == -1) {
+                perror("accept() selhal - execute commands - PASV");
                 exit(EXIT_FAILURE);
             }
-            ftp_sockets_obj.ftp_data_com = ftp_data_com;
+            printf("\n\naccepted\n\n");
+            fflush(stdout);
+
+            // // vetsinou se setsockopt() ma davat pred bind(), listen(), accept(), connect(), ale pry jsou i nejaky options, ktere se maji dat az po
+            // if (setsockopt(ftp_sockets_obj.ftp_data_com, SOL_SOCKET | SO_REUSEPORT, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
+            //     perror("setsockopt() selhal - execute command - PASV");
+            //     exit(EXIT_FAILURE);
+            // }
+            evutil_make_socket_nonblocking(ftp_sockets_obj.ftp_data_com);
 
             evbase_data = event_base_new();
-            struct bufferevent *bufevent_data = bufferevent_socket_new(evbase_data, ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE); // BEV_OPT_UNLOCK_CALLBACKS
+            timeout_data.tv_sec = 3;
+            timeout_data.tv_usec = 0;
+            struct event *event_timeout = event_new(evbase_data, (evutil_socket_t)ftp_sockets_obj.ftp_data_com, EV_TIMEOUT | EV_PERSIST, reset_timeval_struct_data, NULL);
+            event_add(event_timeout, &timeout_data);
 
-            void (*bufevent_write_control)(struct bufferevent *bufevent_control, void *ptr_arg) = &bufevent_write_cb_control;
-            void (*bufevent_read_control)(struct bufferevent *bufevent_control, void *ptr_arg) = &bufevent_read_cb_control;
-            void (*bufevent_event_both)(struct bufferevent *bufevent_both, short events, void *ptr_arg) = &bufevent_event_cb_both;
-            bufferevent_setcb(bufevent_data, bufevent_read_control, bufevent_write_control, bufevent_event_both, NULL); // 2. pointer, ktery budou chtit
+            // if (fcntl(ftp_sockets_obj.ftp_data_com, F_SETFL, O_NONBLOCK) == -1) { // musi byt nonblocking, aby se to mohlo dat do bufferevent_socket_new()
+            //     perror("fcntl() selhal - neslo nastavit O_NONBLOCK - handle_command_function");
+            //     exit(EXIT_FAILURE);
+            // }
+            
 
+            bufevent_data = bufferevent_socket_new(evbase_data, ftp_sockets_obj.ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE); // BEV_OPT_UNLOCK_CALLBACKS
+
+            void (*bufevent_write_data)(struct bufferevent *bufevent_control, void *ptr_arg) = &bufevent_write_cb_data;
+            void (*bufevent_read_data)(struct bufferevent *bufevent_control, void *ptr_arg) = &bufevent_read_cb_data;
+            void (*bufevent_event_data)(struct bufferevent *bufevent_both, short events, void *ptr_arg) = &bufevent_event_cb_data;
+            bufferevent_setcb(bufevent_data, bufevent_read_data, bufevent_write_data, bufevent_event_data, NULL); // 2. pointer, ktery budou chtit
             bufferevent_enable(bufevent_data, EV_READ | EV_WRITE);
 
             char *address = (char *)malloc(INET_ADDRSTRLEN); // 255.255.255.255 => 15 + \0 => INET_ADDRSTRLEN
             if ( !inet_ntop(server_data_info.sin_family, (struct sockaddr *)&server_data_info.sin_addr.s_addr, address, INET_ADDRSTRLEN)) {
-                perror("inet_ntop() selhalo - execute_commands");
+                perror("inet_ntop() selhalo - execute_commands - PASV");
             }
             
             for (int i = 0; i < INET_ADDRSTRLEN; i++) {
@@ -1103,6 +1390,7 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
                     address[i] = ',';
                 }
             }
+            server_data_info.sin_port = htons(DATA_PORT);
             unsigned char *port_array = (unsigned char *)&server_data_info.sin_port;
             int st_Byte_port = port_array[0];
             int nd_Byte_port = port_array[1];
@@ -1115,12 +1403,20 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
                 perror("mq_send() selhal - execute_commands");
                 exit(EXIT_FAILURE);
             }
-        }
 
-        char msg2[] = "125 - Data connection already open; trasfer starting";
-        if (mq_send(control_queue, msg2, strlen(msg2) + 1, 30) == -1) {
-            perror("mq_send() selhal - execute_commands");
-            exit(EXIT_FAILURE);
+            // struct timeval je u event base protoze ty notifikace jsou spozdene, tak prave k tomu to tam je, aby porad bylo nejake podniceni te event_base, aby nezaostavala
+
+            pthread_t bufevent_data_base_thread;
+            if (pthread_create(&bufevent_data_base_thread, NULL, &run_ev_base_loop, NULL) != 0) {
+                perror("pthread_create() selhal - execute_command - PORT");
+                exit(EXIT_FAILURE);
+            }
+
+            if (pthread_detach(bufevent_data_base_thread) != 0) {
+                perror("pthread_detach() selhal - execute_command - PORT");
+                exit(EXIT_FAILURE);
+            }
+
         }
     }
     else {
@@ -1134,8 +1430,27 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
 }
 
 char *read_contents_ftp(char *path) {
-    int fd = open(path, O_RDONLY);
+    char *carriage_return = strstr(path, "\r");
+    if (carriage_return == NULL) {
+        perror("strstr() selhal - read_contents_ftp");
+        exit(EXIT_FAILURE);
+    }
+    int carriage_return_i = (int)(carriage_return - path);
 
+    path[carriage_return_i + 1] = '\0';
+    path[carriage_return_i] = '\0';
+
+    int fd = open(path, O_RDONLY);
+    printf("\n\n\n%s", path);
+    
+    fflush(stdout);
+    if (fd == -1) {
+        perror("open() selhal - read_contents_ftp");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("\n\n\n\n%s", path);
+    fflush(stdout);
     // pokud bychom meli FILE *, tak musime pouzit fileno() pro ziskani file descriptoru
     struct stat info;
 
@@ -1146,19 +1461,23 @@ char *read_contents_ftp(char *path) {
     }
 
     size_t len_file = info.st_size;
-    char *data_from_file = (char *)malloc(len_file + 1); // file s jednim znakem => 2 Bytes => char + \n => proto + 1 pro => 3 Bytes
+    char *data_from_file = (char *)malloc(len_file); // file s jednim znakem vytvoreny s nano => 2 Bytes pokud to => char + \n, pokud je to vytvoreno pomoci usera, tak jenom => char, FILES NEMAJI NULL CHARACTER!!
 
     ssize_t bytes_read;
     size_t total_bytes = 0;
-    while ( bytes_read = read(fd, data_from_file + total_bytes, len_file - total_bytes) != len_file) {
-        if ( bytes_read == -1) {
+
+    while (1) {
+        bytes_read = read(fd, data_from_file + total_bytes, len_file - total_bytes);
+        total_bytes = total_bytes + bytes_read;
+
+        if (total_bytes == len_file) {
+            return data_from_file;
+        }
+        else if (bytes_read == -1) {
             perror("read() selhal - read_contents_ftp");
             exit(EXIT_FAILURE);
         }
-        total_bytes += bytes_read;
-    }
-    data_from_file[total_bytes] = '\0';
-    return data_from_file;
+    }   
 }
 
 char **get_account_information(char *client_information) {
@@ -1205,8 +1524,9 @@ char **get_account_information(char *client_information) {
 // nemusime implementovat event_cb, protoze kazda funkce dostava short events, kde muzeme treba zjistit, jestli peer disconectnul socket
 void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
     // v bufferu muzou byt vice TCP segmentu (data z TCP segmentu)
-   printf("\n\nREAD_CB_CONTROL");
+   printf("\n\nREAD_CB_CONTROL\n\n\n\n\n\n\n\n\n");
    fflush(stdout);
+//    exit(EXIT_FAILURE);
    reset_bufevent_data_len();
    char *data = (char *)malloc(BUFEVENT_DATA_LEN);
 
@@ -1217,7 +1537,8 @@ void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_ar
     bytes_total += bytes_received;
 
     if (BUFEVENT_DATA_LEN - bytes_total == 0 && !strstr("\r\n", data)) { // nemuze to byt pod 0, protoze vzdy chceme 256 - x pocet Bytes, strstr(substring, string)
-        char *data_temp = (char *)realloc(data, BUFEVENT_DATA_LEN + BUFEVENT_DATA_LEN); // 256 + 256 => 256 + 256 + 256 ...
+        BUFEVENT_DATA_LEN = BUFEVENT_DATA_LEN + BUFEVENT_DATA_LEN;
+        char *data_temp = (char *)realloc(data, BUFEVENT_DATA_LEN); // 256 + 256 => 256 + 256 + 256 ...
         // copies data into into data_temp from data
         // pokud realloc vrati stejny pointer (zvetsi puvodni pointer), tak se jenom vrati ten stary pointer, pokud realloc novy pointer, je to protoze nebylo contiguous space Bytes vedle sebe, zkopiruje Bytes do noveho pointeru a stary dealokuje automaticky => toto znamena, ze z char *ptr na nejakou memory oblast se stal jenom pointer, kde v memory je 8 Bytes dedicated k ulozeni prave toho pointeru na stack procesu (misto hodnoty, je ta promenna prazdna) a potom udelame data = temp_data, kde tu promennou zase naplnime
 
@@ -1233,18 +1554,63 @@ void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_ar
 
             ftp_user_info.username = account_info[0];
             ftp_user_info.password = account_info[1];
+
+
+            printf("\n\n\n\ndata: %s", data);
+            fflush(stdout);
             ftp_user_info.user_loggedin = 1;
+            send_conformation_account(bufevent_control, 0);
             // user je prihlasen
             break;
         }
+        else if (strstr(data, "<&&>") != NULL) {
+            /*
+            char *username;
+            char *password;
+            char *last_path;
+            
+            int user_loggedin;
+            Ftp_Data_Repre data_represantation;
+
+            int data_connection_sd;
+            int data_connection_port;
+            */
+            free(ftp_user_info.username);
+            free(ftp_user_info.password);
+            free(ftp_user_info.last_path);
+
+            ftp_user_info.user_loggedin = 0;
+            close(ftp_user_info.data_connection_sd);
+            printf("\n\n\n\n\n\nQUIT");
+            fflush(stdout);
+            send_conformation_account(bufevent_control, 1);
+            break;
+        }
+        else if (strstr(data, "!END!") != NULL) {
+            fprintf(stderr, "\nklient ukoncil proces");
+            _exit(EXIT_FAILURE);
+        }
+
         char *crlf_end = strstr(data, "\n");
+        if (crlf_end == NULL || strstr(data, "\r") == NULL) {
+            fprintf(stderr, "\nclient neukoncil svoji zpravu s CRLF");
+            char *data_new_space = realloc(data, BUFEVENT_DATA_LEN + 3);
+
+            data_new_space[strlen(data_new_space)] = '\r';
+            data_new_space[strlen(data_new_space)] = '\n';
+            data_new_space[strlen(data_new_space)] = '\0';
+
+            crlf_end = strstr(data, "\n");
+        }
+
         int crlf_end_i = (int)(crlf_end-data);
 
         data[crlf_end_i + 1] = '\0'; // funkce ocekavaji \r\n konec commandu
 
         char *text = (char *)malloc(crlf_end_i);
         strcpy(text, data); // strcpy kopiruje string az do \0 (konci prave na \0)
-
+        printf("\n\n\nhaloooooo %s\n\n", text);
+        fflush(stdout);
         execute_commands(text, bufevent_control);
         break;
     }
@@ -1298,7 +1664,12 @@ void control_send_ftp(struct bufferevent *bufevent_control) {
             }
             break;
         case 1: // true
-            mqd_t control_queue = mq_open(CONTROL_QUEUE_NAME, O_RDONLY); // otevirani queue pro odesilani FTP responses
+            int control_queue_i = 0;
+            mqd_t control_queue;
+            if (control_queue_i == 0) {
+                control_queue = mq_open(CONTROL_QUEUE_NAME, O_RDONLY); // otevirani queue pro odesilani FTP responses
+                control_queue_i++;
+            }
 
             if (control_queue == -1) {
                 perror("mq_open() selhal - bufevent_write_cb_control");
@@ -1320,7 +1691,8 @@ void control_send_ftp(struct bufferevent *bufevent_control) {
             }
             else if (strlen(received_message) > 0) {
                 char *new_received_message = insert_crlf(received_message);
-
+                printf("\n\n\n\n\nmessage to client: %s", new_received_message);
+                fflush(stdout);;
                 if ( bufferevent_write(bufevent_control, new_received_message, strlen(new_received_message) + 1) == -1) {
                     perror("bufferevent_write() selhal - write_control_cb - loggedin - case 1");
                     exit(EXIT_FAILURE);
@@ -1363,16 +1735,72 @@ int save_file(char *path, char *data_received) {
     return 0;
 }
 
-void bufevent_event_cb_both(struct bufferevent *bufevent_both, short events, void *ptr_arg) {
-    // event callback pro obe moznosti, jak control, tak i data
+void bufevent_event_cb_data(struct bufferevent *bufevent_data, short events, void *ptr_arg) {
+
+    printf("\n\n\n\n\n\nEVENT DATA\n\n\n");
+    fflush(stdout);
+
+    evutil_socket_t socket_to_close = bufferevent_getfd(bufevent_data);
+    if (socket_to_close == -1) {
+        fprintf(stderr, "\nbufferevent_getfd() selhal - bufevent_event_cb_data");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("\n\nTADY\n\n");
+    fflush(stdout);
+
     if ((BEV_EVENT_EOF & events) == BEV_EVENT_EOF) {
-        perror("bufferevent_read() selhal - bufevent_read_cb_data");
-        perror("peer ukoncil connection - EOF - bufevent_event_cb_data");
+        close(ftp_sockets_obj.ftp_data_com);
+        close(ftp_sockets_obj.ftp_data_socket);
+        close(ftp_sockets_obj.ftp_control_socket);
+        close(ftp_sockets_obj.ftp_control_com);
+
+        fprintf(stderr, "\nbufferevent_read() selhal - bufevent_event_cb_data");
+        fprintf(stderr, "\npeer ukoncil connection - EOF - data connection - bufevent_event_cb_data");
+        fflush(stderr);
         exit(EXIT_FAILURE);
     }
     else if ( (BEV_EVENT_ERROR & events) == BEV_EVENT_ERROR) {
-        perror("bufferevent_read() selhal - bufevent_read_cb_data");
+        close(ftp_sockets_obj.ftp_data_com);
+        close(ftp_sockets_obj.ftp_data_socket);
+        close(ftp_sockets_obj.ftp_control_socket);
+        close(ftp_sockets_obj.ftp_control_com);
+        
+        fprintf(stderr, "\nbufferevent_read() selhal - data connection - bufevent_event_cb_data");
+        fflush(stderr);
         exit(EXIT_FAILURE);
+    }
+}
+
+void bufevent_event_cb_control(struct bufferevent *bufevent_control, short events, void *ptr_arg) {
+    printf("\n\n\n\n\n\nEVENT CONTROL\n\n\n");
+    fflush(stdout);
+    evutil_socket_t socket_to_close = bufferevent_getfd(bufevent_control);
+    if (socket_to_close == -1) {
+        fprintf(stderr, "\nbufferevent_getfd() selhal - bufevent_event_cb_data");
+        _exit(EXIT_FAILURE);
+    }
+
+    if ((BEV_EVENT_EOF & events) == BEV_EVENT_EOF) {
+        close(ftp_sockets_obj.ftp_data_com);
+        close(ftp_sockets_obj.ftp_data_socket);
+        close(ftp_sockets_obj.ftp_control_socket);
+        close(ftp_sockets_obj.ftp_control_com);
+        
+        fprintf(stderr, "\nbufferevent_read() selhal - control connection - bufevent_event_cb_control");
+        fprintf(stderr, "\npeer ukoncil connection - EOF - control connection - bufevent_event_cb_control");
+        fflush(stderr);
+        _exit(EXIT_FAILURE);
+    }
+    else if ( (BEV_EVENT_ERROR & events) == BEV_EVENT_ERROR) {
+        close(ftp_sockets_obj.ftp_data_com);
+        close(ftp_sockets_obj.ftp_data_socket);
+        close(ftp_sockets_obj.ftp_control_socket);
+        close(ftp_sockets_obj.ftp_control_com);
+
+        fprintf(stderr, "\nbufferevent_read() selhal - control connection - bufevent_event_cb_control");
+        fflush(stderr);
+        _exit(EXIT_FAILURE);
     }
 }
 
@@ -1407,40 +1835,6 @@ void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
     save_file(path_to_receive, data); // tato funkce bud udela co ma, nebo skonci program => nemusime kontrolovat pomoci if statement 
 }
 
-void data_send_ftp(struct bufferevent *bufevent_data) {
-    // pokud chceme poslat soubor tak    read cb_c => write cb_c => write cb_d
-    // pokud chceme prijmout souvor, tak read cb_c => write cb_c => read cb_d
-    mqd_t data_queue = mq_open(DATA_QUEUE_NAME, O_RDONLY);
-
-    if (data_queue == -1) {
-        perror("mq_open() selhal - bufevent_write_cb_data");
-        exit(EXIT_FAILURE);
-        // AVE CHRISTUS REX!
-    }
-
-    char *path_to_send = (char *)malloc(QUEUE_MESSAGE_LEN);
-    if ( mq_receive(data_queue, path_to_send, QUEUE_MESSAGE_LEN, NULL) == -1) {
-        perror("mq_receive() selhal - bufevent_write_cb_data");
-        exit(EXIT_FAILURE);
-    }
-    // ted mame path AVE CHRISTUS REX!!
-
-    struct stat temp_struct;
-    if (stat(path_to_send, &temp_struct) == -1) {
-        perror("stat() selhal - bufevent_write_cb_data");
-        exit(EXIT_FAILURE);
-    }
-    int path_len = temp_struct.st_size;
-
-    char *data_to_send = read_contents_ftp(path_to_send);
-
-    if ( bufferevent_write(bufevent_data, data_to_send, path_len + 1) == -1) { // + 1 pro \0, protoze 1 char file => @ Bytes => 3 Bytes pro \0
-        perror("bufferevent_write() selhal - bufevent_write_cb_data");
-        exit(EXIT_FAILURE);
-    }
-}
-
-
 void bufevent_write_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
     printf("\nall data sent");
 }
@@ -1454,11 +1848,7 @@ void bufevent_write_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
 
 // bufferevent ma input a output buffer, s tim ze input buffer je read a output buffer je write
 
-
-void reset_timeval_struct (evutil_socket_t fd, short what, void *arg) {
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
-}
+// struct bufferevent *bufevent_control;
 void *handle_ftp_connections(void *) {
     printf("\n=== handle_ftp_connections ===");
     fflush(stdout);
@@ -1468,25 +1858,35 @@ void *handle_ftp_connections(void *) {
     // // kdyz nevime delku zpravi, tak bud musime poslat pred samotnou zpravou, kolik Bytes to bude chtit nebo udelame non-blocking socket => libevent
     // ftp_sockets_p->control_or_data = CONTROL;
 
-    struct event_base *evbase_control = event_base_new(); // default settings
+    evbase_control = event_base_new(); // default settings
     if (evbase_control == NULL) {
         perror("event_base_new() selhal - data_connection");
         exit(EXIT_FAILURE);
     }
 
     /*
+    struct timeval
     kdyz se neco posle pres bufferevent_write() nebo precte pres bufferevent_read(), tak jeste pred tim nez se zavolaji tyto funkce, tak se uz spusti event_base_loop, coz znamena, ze tento thread by byll zasekly v select(), epoll() apod. a ceka se na nejaky event prave na underlying socketu, jediny event, ktery ta druha strana muze udelat je ukoncit socket, pokud se toto udela, select(), epoll() uvidi ze je novy event, tento se zaregistruje a potom se event_base_loop() zase podiva na eventy, ktere ma v event_base, kde uz je prave treba ten read/write a az potom se to udela, ale druha strana uz zavrela socket
 
     nebo by client mohl posilat vzdy 2 zpravy aby jedna se zaregistrovala a ta druha by slouzila pro precteni, toto je ale implementacne tezke a zbytecne, proto diky Bohu, se muze udelat persistivni TIMEOUT event, ktery v event_base zustane a bude se pripominat podle toho, jak se nastavi struktura timeval
     */
 
     // event se bude opakovat kazdou sekundu
-    
+    timeout_control.tv_sec = 5;
+    timeout_control.tv_usec = 0;    
 
-    struct event *timeout_event = event_new(evbase_control, ftp_sockets_obj.ftp_control_com, EV_TIMEOUT | EV_PERSIST, reset_timeval_struct, NULL); // function a argumenty nemusi byt, protoze jenom je potreba porad aktualizovat ten event_base
-    event_add(timeout_event, &timeout);
 
-    struct bufferevent *bufevent_control = bufferevent_socket_new(evbase_control, ftp_sockets_obj.ftp_control_com, BEV_OPT_CLOSE_ON_FREE); // thread safe // BEV_OPT_UNLOCK_CALLBACKS
+    // if (fcntl(ftp_sockets_obj.ftp_control_com, F_SETFL, O_NONBLOCK) == -1) { // musi byt nonblocking, aby to mohlo ji do bufferevent_socket_new()
+    //     perror("fcntl() selhal - neslo nastavit O_NONBLOCK - handle_command_function");
+    //     exit(EXIT_FAILURE);
+    // }
+
+    evutil_make_socket_nonblocking(ftp_sockets_obj.ftp_control_com); // musi byt volane pred event_new()
+    struct event *timeout_event = event_new(evbase_control, ftp_sockets_obj.ftp_control_com, EV_TIMEOUT | EV_PERSIST, reset_timeval_struct_control, NULL); // function a argumenty nemusi byt, protoze jenom je potreba porad aktualizovat ten event_base
+    event_add(timeout_event, &timeout_control);
+
+
+    bufevent_control = bufferevent_socket_new(evbase_control, ftp_sockets_obj.ftp_control_com, BEV_OPT_CLOSE_ON_FREE); // thread safe // BEV_OPT_UNLOCK_CALLBACKS
     if (bufevent_control == NULL) {
         perror("bufferevent_socket_new() selhal - handle_ftp_connections");
         exit(EXIT_FAILURE);
@@ -1496,8 +1896,9 @@ void *handle_ftp_connections(void *) {
 
     void (*bufevent_write_control)(struct bufferevent *bufevent_control, void *ptr_arg) = &bufevent_write_cb_control;
     void (*bufevent_read_control)(struct bufferevent *bufevent_control, void *ptr_arg) = &bufevent_read_cb_control;
-    bufferevent_setcb(bufevent_control, bufevent_read_control, bufevent_write_control, NULL, NULL); // prvni NULL je pro eventcb, coz by melo byt ale stejny cb jako u event_base, ftp_sockets_p je pointer na argumenty ke vsem temto funkcim
-    bufferevent_enable(bufevent_control, EV_READ | EV_WRITE);
+    void (*bufevent_event_control)(struct bufferevent *bufevent_control, short events, void *ptr_arg) = &bufevent_event_cb_control;
+    bufferevent_setcb(bufevent_control, bufevent_read_control, bufevent_write_control, bufevent_event_control, NULL); // prvni NULL je pro eventcb, coz by melo byt ale stejny cb jako u event_base, ftp_sockets_p je pointer na argumenty ke vsem temto funkcim
+    bufferevent_enable(bufevent_control, EV_READ|EV_WRITE);
 
     // edge-trigger event a level event trigger
     // toto se pouziva i digitalnich obvodech, ale v trochu jinem svetle, ale predstavme si 0 a 1 a stav mezi nimi, zkracene to znamena kdyz mame nejake event (hodnotu 0 nebo 1), tak u level event trigger dostaneme notifikaci s tim, ze event byl spusten a tato notifikace nam zustane porad nekde ulozena (u epoll events nebo u libevent), ale porad tam bude napsane, ze je mozno neco udelat, ale kdyz to bude edge trigger, tak dostaneme jenom tu notifikaci o tom, ze neco je pripravene a tuto notifikaci dostaneme jenom jednou do te doby nez treba ten socket neprecteme z neho vsechny data a potom az muzeme dostat dalsi upozorneni od onoho socketu, takovy nonblocking upozorneni
@@ -1511,17 +1912,33 @@ void *handle_ftp_connections(void *) {
     // https://stackoverflow.com/questions/70432388/libevent-running-the-loopevent-base-loop
     // event_base_loop(evbase_control, EVLOOP_NO_EXIT_ON_EMPTY); // EVLOOP_NONBLOCK tam nemuze byt protoze kdyby nebyly eventy, tak se to ukonci, paradox // bude cekat nez se nejake eventy udelaji ready a pokud zadne nebudou ready, tak se z tohoto loopu nevyskoci
     
-    printf("\n=== code runs to this point - AVE MARIA ===");
+    printf("\n\n\n\n\n\n\n\n\n\n\n=== code runs to this point - AVE MARIA ===\n\n\n\n\n\n\n\n\n");
     fflush(stdout);
 
-    event_base_dispatch(evbase_control); // , EVLOOP_NO_EXIT_ON_EMPTY
+    event_base_loop(evbase_control, EVLOOP_NO_EXIT_ON_EMPTY); // , EVLOOP_NO_EXIT_ON_EMPTY
 }
 
 void *select_ftp() {
-    printf("\n=== Acceptovani control_socket ===");
-    ftp_sockets_obj.ftp_control_com = accept(ftp_sockets_obj.ftp_control_socket, NULL, NULL);
+    int optvalftp = 1;
+    if ( (setsockopt(ftp_sockets_obj.ftp_control_socket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &optvalftp, sizeof(int))) == -1) {
+        perror("setsockopt() selhal - select_ftp");
+        exit(EXIT_FAILURE);
+    }
 
-    if (ftp_sockets_obj.ftp_control_com == -1) {
+    if ( bind(ftp_sockets_obj.ftp_control_socket, (struct sockaddr *)&server_control_info, sizeof(server_control_info)) == -1) {
+        perror("bind() selhal - select_ftp");
+        exit(EXIT_FAILURE);
+    }
+
+    // clock_t time = clock() / CLOCKS_PER_SEC;
+
+    if ( listen(ftp_sockets_obj.ftp_control_socket, BACKLOG) == -1) {
+        perror("listen() selhal - select_ftp");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("\n=== Acceptovani control_socket ===");
+    if ((ftp_sockets_obj.ftp_control_com = accept(ftp_sockets_obj.ftp_control_socket, NULL, NULL)) == -1) {
         perror("accept() selhal - select_ftp");
         // exit(EXIT_FAILURE);
     }
@@ -1534,85 +1951,88 @@ void *select_ftp() {
 
     pthread_t thread_control;
     void *(*handle_ftp_p)(void *) = &handle_ftp_connections;
-    if ( (pthread_create(&thread_control, NULL, handle_ftp_p, NULL)) !=  0) {
+    if ( (pthread_create(&thread_control, NULL, handle_ftp_p, NULL)) != 0) {
         perror("pthread_create() selhal - select_ftp");
         // exit(EXIT_FAILURE);
     }
 
+    pthread_detach(thread_control);
 
+    // if (nic) {
+    //     // pthread_detach(thread_control);
 
+    //     // if (pthread_detach(thread_control) != 0) {
+    //     //     perror("pthread_detach() selhal - select_ftp()");
+    //     //     exit(EXIT_FAILURE);
+    //     // }
 
+    //     /*
 
+    //     // accept ma uz zabudovany pocet file descriptoru, ktere obslouzi, a to je 1024, je to pole typu long, kde kazdy bit je jeden file descriptor => bit. 256 => file descriptor 256
+    //     // na jeden long je to 64 bitu (8 Bytes) => 1024 / 64 = 16, vetsinou tato maska je 16 Bytes velka
+        
+    //     // kdyz dereferencujeme void * pointer, tak kompilator nevi, kolik Bytes musi dereferencovat => warning, ale nemuzeme udelat, protoze si to kompilator nezapamatuje => casting je JEN ONE TIME THING, museli bychom typecastovat u kazdeho, proto radsi udelam novy pointer
+    //     // (struct Ftp_Sockets *)ftp_sockets;
+    //     printf("\n\nHALOOOO, ted jsem tady\n\n\n\n");
 
-    // pthread_detach(thread_control);
+    //     // struct timeval nema zadne pocatecni hodnoty, proto se to musi nastavit obe
+    //     struct timeval timeout;
+    //     timeout.tv_sec = 5;
+    //     timeout.tv_usec = 0;
 
-    // if (pthread_detach(thread_control) != 0) {
-    //     perror("pthread_detach() selhal - select_ftp()");
-    //     exit(EXIT_FAILURE);
+    //     fd_set readbitmask;
+    //     FD_ZERO(&readbitmask);
+    //     FD_SET(ftp_sockets_obj.ftp_control_socket, &readbitmask);
+
+    //     // read, write, exception
+    //     // kousek na tom socketu prijme, kousek na tom socketu zapise, moc se nedeje, je to exception treba out of band data u TCP
+    //     int nfds = ftp_sockets_obj.ftp_data_socket > ftp_sockets_obj.ftp_control_socket ? ftp_sockets_obj.ftp_data_socket : ftp_sockets_obj.ftp_control_socket;
+    //     nfds++;
+    //     int rv = select(50, &readbitmask, NULL, NULL, &timeout);
+        
+    //     printf("\n%d", rv);
+    //     fflush(stdout);
+    //     // select vraci total pocet vsech file desciptoru, ktere jsou volne na operaci (v ramci daneho fd_setu)
+    //     // pokud se tento if statement nestane, tak ono prijde SYN => SYN queue, odesle se SYN + ACK => client je touto dobou uz pripojeny, posle ACK, ted je server pripojeny, ale je to pripojene jenom na kernel level, protoze server neudelal accept()! => z tohoto muze byt velky problem => SYN flood, connection pool flooding => DoS
+    //     // atomicka operace je ta, ktera bezi bez preruseni
+    //     if (rv == 1) {
+    //         printf("\n\ntady ted je ftp_socket_obj.ftp_control_socket ready");
+    //         // proces ma 4 nejhlavnejsi identity => RUID (Real U - user ID), EUID (Effective UID), RGID (Real group id), EGID (Effective group id), nejhlavnejsi jsou ale RUID a EUID, AUID => je cislo, ktere se priradi userovi kdyz se prihlasi a pokazde kdyz ten user spusti nejaky program, tak ten proces zdedi tento AUID => audit user ID
+    //         // pokud bude mode jiny nez ma samotny soubor, tak se to rozhodne podle implemetance UNIX/Linux, nase implementace bude mit permise 4777 -> man mq_open
+            
+    //         printf("\n\n\nANO, JE TO VSE OK\n\n\n\n\n");
+    //         fflush(stdout);
+
+    //         ftp_sockets_obj.ftp_data_com = -1;
+    //         ftp_sockets_obj.ftp_control_com = accept(ftp_sockets_obj.ftp_control_socket, NULL, NULL);
+    //         char temp_buf[10];
+    //         snprintf(temp_buf, 10, "%s%c%c", "ahoj", 0x0d, 0x0a);
+    //         send(ftp_sockets_obj.ftp_control_com, temp_buf, 10, 0);
+    //         printf("\n\n\npo accept, ftp_cotnrol com: %d\n\n\n\n\n", ftp_sockets_obj.ftp_control_com);
+            
+    //         printf("\n\n\npo pthread_create\n\n\n\n\n");
+
+    //         // ftp_sockets_p->ftp_data_com = accept(ftp_sockets_p->ftp_data_socket, NULL, NULL);
+    //         // printf(":%d :%d", ftp_sockets_p->ftp_control_com, ftp_sockets_p->ftp_data_com);
+    //         // fflush(stdout);
+    //         return NULL;
+    //     }
+    //     else {
+    //         printf("\n\n\n\nnestalo se\n\n\n\n");
+    //         // exit(EXIT_FAILURE);
+    //     }
+
+    //     */
     // }
-
-    /*
-
-    // accept ma uz zabudovany pocet file descriptoru, ktere obslouzi, a to je 1024, je to pole typu long, kde kazdy bit je jeden file descriptor => bit. 256 => file descriptor 256
-    // na jeden long je to 64 bitu (8 Bytes) => 1024 / 64 = 16, vetsinou tato maska je 16 Bytes velka
     
-    // kdyz dereferencujeme void * pointer, tak kompilator nevi, kolik Bytes musi dereferencovat => warning, ale nemuzeme udelat, protoze si to kompilator nezapamatuje => casting je JEN ONE TIME THING, museli bychom typecastovat u kazdeho, proto radsi udelam novy pointer
-    // (struct Ftp_Sockets *)ftp_sockets;
-    printf("\n\nHALOOOO, ted jsem tady\n\n\n\n");
-
-    // struct timeval nema zadne pocatecni hodnoty, proto se to musi nastavit obe
-    struct timeval timeout;
-    timeout.tv_sec = 5;
-    timeout.tv_usec = 0;
-
-    fd_set readbitmask;
-    FD_ZERO(&readbitmask);
-    FD_SET(ftp_sockets_obj.ftp_control_socket, &readbitmask);
-
-    // read, write, exception
-    // kousek na tom socketu prijme, kousek na tom socketu zapise, moc se nedeje, je to exception treba out of band data u TCP
-    int nfds = ftp_sockets_obj.ftp_data_socket > ftp_sockets_obj.ftp_control_socket ? ftp_sockets_obj.ftp_data_socket : ftp_sockets_obj.ftp_control_socket;
-    nfds++;
-    int rv = select(50, &readbitmask, NULL, NULL, &timeout);
-    
-    printf("\n%d", rv);
-    fflush(stdout);
-    // select vraci total pocet vsech file desciptoru, ktere jsou volne na operaci (v ramci daneho fd_setu)
-    // pokud se tento if statement nestane, tak ono prijde SYN => SYN queue, odesle se SYN + ACK => client je touto dobou uz pripojeny, posle ACK, ted je server pripojeny, ale je to pripojene jenom na kernel level, protoze server neudelal accept()! => z tohoto muze byt velky problem => SYN flood, connection pool flooding => DoS
-    // atomicka operace je ta, ktera bezi bez preruseni
-    if (rv == 1) {
-        printf("\n\ntady ted je ftp_socket_obj.ftp_control_socket ready");
-        // proces ma 4 nejhlavnejsi identity => RUID (Real U - user ID), EUID (Effective UID), RGID (Real group id), EGID (Effective group id), nejhlavnejsi jsou ale RUID a EUID, AUID => je cislo, ktere se priradi userovi kdyz se prihlasi a pokazde kdyz ten user spusti nejaky program, tak ten proces zdedi tento AUID => audit user ID
-        // pokud bude mode jiny nez ma samotny soubor, tak se to rozhodne podle implemetance UNIX/Linux, nase implementace bude mit permise 4777 -> man mq_open
-        
-        printf("\n\n\nANO, JE TO VSE OK\n\n\n\n\n");
-        fflush(stdout);
-
-        ftp_sockets_obj.ftp_data_com = -1;
-        ftp_sockets_obj.ftp_control_com = accept(ftp_sockets_obj.ftp_control_socket, NULL, NULL);
-        char temp_buf[10];
-        snprintf(temp_buf, 10, "%s%c%c", "ahoj", 0x0d, 0x0a);
-        send(ftp_sockets_obj.ftp_control_com, temp_buf, 10, 0);
-        printf("\n\n\npo accept, ftp_cotnrol com: %d\n\n\n\n\n", ftp_sockets_obj.ftp_control_com);
-        
-        printf("\n\n\npo pthread_create\n\n\n\n\n");
-
-        // ftp_sockets_p->ftp_data_com = accept(ftp_sockets_p->ftp_data_socket, NULL, NULL);
-        // printf(":%d :%d", ftp_sockets_p->ftp_control_com, ftp_sockets_p->ftp_data_com);
-        // fflush(stdout);
-        return NULL;
-    }
-    else {
-        printf("\n\n\n\nnestalo se\n\n\n\n");
-        // exit(EXIT_FAILURE);
-    }
-
-    */
 }
 
 int main()
 {
-    // event_enable_debug_mode();
+    signal(SIGINT, signal_handler);
+    system("/media/sf_projects_on_vm/FTP_SERVER/unlink_mqs");
+    printf("\n");
+    event_enable_debug_mode();
     event_enable_debug_logging(EVENT_DBG_ALL);
     evthread_use_pthreads(); // abychom mohli pouzivat libevent s threads
     set_queue_message_len();
@@ -1674,72 +2094,36 @@ int main()
     // SSL_CTX_set_alpn_select_cb(ctx, f_p_cb_alpn, NULL); // POKUD se zajisti, ze client posle ALPN s listem, ktere by mohl pouzit (soucasti SSL/TLS handshake), tak pokud se zachyti tento request na ty protokly (ALPN), tak se
     // nastavi nova callback funkce, kde si muzeme udelat to, co chceme => vypsat nejake informace/spustit dalsi funkce/vybrat si protokol
 
-    
+    // protoze control connection bude porad a vzdycky navazana, tak se sockaddr_in muze naplnit uplne cela a jelikoz to bude vykonavat funkci serveru, tak ta IP adresa a port je dulezita pro klienta
     memset(&server_control_info, 0, sizeof(struct sockaddr_in));
     server_control_info.sin_family = AF_INET;
     server_control_info.sin_port = htons(CONTROL_PORT);
-
-    
-    memset(&server_data_info, 0, sizeof(struct sockaddr_in));
-    server_data_info.sin_family = AF_INET;
-    server_data_info.sin_port = htons(DATA_PORT);
-
     // muze se do davat rovnou do te struktury, protoze ma jen jednoho clena a tam se kopiruji ty data a zrovna to vyjde na tu delku, ale kdyby tam byly dva cleny, tak je lepsi tam uvest samotneho clena te struktury
     if ( inet_pton(server_control_info.sin_family, "127.0.0.1", &server_control_info.sin_addr) <= 0) {
         perror("inet_pton() selhal - ftp_control");
         exit(EXIT_FAILURE);
     }
 
+    // protoze data connection bud vubec nemusi nastat nebo muze nastat pomoci PASV nebo PORT, tak se tam lisi trochu rozdily, pomoci PASV, tak client initiates, takze staci naslouchat na nejakem portu a IP adrese, ale u PORT server plni funkci klienta a pripojuje se na klienta (ted jakoby server v tomto pripade) a musim znat IP adresu a port toho klienta, (coz se posle pres control connection), takze ta IP adresa a ten port mohou byt jine, proto se muze vyplnit jenom sin_family jako AF_INET, protoze tato implementace bude podporovat jenom IPv4
+
+    // PASV = client initiates
+    // PORT = server initiates
+    memset(&server_data_info, 0, sizeof(struct sockaddr_in));
+    server_data_info.sin_family = AF_INET;
+    server_data_info.sin_port = htons(DATA_PORT);
     if ( inet_pton(server_data_info.sin_family, "127.0.0.1", &server_data_info.sin_addr) <= 0) {
         perror("inet_pton() selhal - ftp_data");
         exit(EXIT_FAILURE);
     }
 
-    int ftp_control_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (ftp_control_socket == -1) {
+    if ((ftp_sockets_obj.ftp_control_socket = socket(server_control_info.sin_family, SOCK_STREAM, 0)) == -1) {
         perror("socket() selhal - ftp_control");
         exit(EXIT_FAILURE);
     }
 
-    int ftp_data_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (ftp_data_socket == -1) {
-        perror("socket selhal - ftp_data");
-        exit(EXIT_FAILURE);
-    }
-
-    int optvalftp = 1;
-    if ( (setsockopt(ftp_control_socket, SOL_SOCKET, SO_REUSEADDR, &optvalftp, sizeof(int))) == -1 || (setsockopt(ftp_control_socket, IPPROTO_TCP, TCP_NODELAY, (char *)&optvalftp, sizeof(int))) == -1) {
-        perror("setsockopt() selhal - ftp_control");
-        exit(EXIT_FAILURE);
-    }
-    
-    if ( (setsockopt(ftp_data_socket, SOL_SOCKET, SO_REUSEADDR, &optvalftp, sizeof(int))) == -1 || (setsockopt(ftp_control_socket, IPPROTO_TCP, TCP_NODELAY, (char *)&optvalftp, sizeof(int))) == -1) {
-        perror("setsockopt() selhal - ftp_data");
-        exit(EXIT_FAILURE);
-    }
-
-    if ( bind(ftp_control_socket, (struct sockaddr *)&server_control_info, sizeof(server_control_info)) == -1) {
-        perror("bind() selhal - ftp_control");
-        exit(EXIT_FAILURE);
-    }
-    // if ( bind( ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(struct sockaddr)) == -1) {
-    //     perror("bind() selhal - ftp_data");
-    // }
-
-    // clock_t time = clock() / CLOCKS_PER_SEC;
-
-    if ( listen(ftp_control_socket, BACKLOG) == -1) {
-        perror("listen() selhal - ftp_control");
-        exit(EXIT_FAILURE);
-    }
-    // if ( listen(ftp_data_socket, BACKLOG) == -1) {
-    //     perror("listen() selhal - ftp_data");
-    //     exit(EXIT_FAILURE);
-    // }
-
-    ftp_sockets_obj.ftp_control_socket = ftp_control_socket;
+    // ftp_sockets_obj.ftp_control_socket = ;
     ftp_sockets_obj.ftp_control_com = -1;
-    ftp_sockets_obj.ftp_data_socket = ftp_data_socket;
+    ftp_sockets_obj.ftp_data_socket = -1;
     ftp_sockets_obj.ftp_data_com = -1;
 
     pthread_t ftp_threadID;

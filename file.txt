@@ -1,0 +1,3 @@
+file.txt
+/media/sf_projects_on_vm/FTP_SERVER/file.txtfile.txt
+/media/sf_projects_on_vm/FTP_SERVER/file.txt
