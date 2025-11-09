@@ -34,6 +34,7 @@
 #include <stdarg.h>
 #include <event2/buffer.h>
 #include <sys/time.h>
+#include <pwd.h>
 
 // !!
 // kdy pouzivat setsockopt()?
@@ -142,6 +143,7 @@ typedef struct Ftp_User_Info {
     char *username;
     char *password;
     char *last_path;
+    char *filename_to_save;
     
     int user_loggedin; // 1 = TRUE, 0 = FALSE
     Ftp_Data_Repre data_represantation;
@@ -149,7 +151,7 @@ typedef struct Ftp_User_Info {
     int data_connection_sd;
     int data_connection_port;
 } Ftp_User_Info;
-struct Ftp_User_Info ftp_user_info = {.username = NULL, .password = NULL, .last_path = NULL, .user_loggedin = 0, .data_represantation = ASCII, .data_connection_sd = -1, .data_connection_port = -1}; // defaultni nastaveni uctu
+struct Ftp_User_Info ftp_user_info = {.username = NULL, .password = NULL, .last_path = NULL, .filename_to_save = NULL, .user_loggedin = 0, .data_represantation = ASCII, .data_connection_sd = -1, .data_connection_port = -1}; // defaultni nastaveni uctu
 
 struct event_base *evbase_data;
 struct event_base *evbase_control;
@@ -264,6 +266,7 @@ void bufevent_event_cb_data(struct bufferevent *bufevent_both, short events, voi
 void bufevent_event_cb_control(struct bufferevent *bufevent_both, short events, void *ptr_arg);
 char *insert_crlf(char *response);
 char *read_contents_ftp(char *path);
+int save_file(char *path, char *data_received);
 
 // ~ NOT, | OR, ^ XOR, & AND, >> right shift, << left shift
 
@@ -474,11 +477,14 @@ void reset_timeval_struct_control (evutil_socket_t fd, short what, void *arg) {
     timeout_control.tv_sec = 5;
     timeout_control.tv_usec = 0;
 
-    printf("\n\n\n\nHALOO\n\n");
+    // printf("\n\nCONTROL timeval\n");
     fflush(stdout);
 }
 
 void reset_timeval_struct_data (evutil_socket_t fd, short what, void *arg) {
+    // printf("\n\nDATA timeval\n");
+    fflush(stdout);
+    
     timeout_data.tv_sec = 3;
     timeout_data.tv_usec = 0;
 }
@@ -611,6 +617,43 @@ void DumpHex(const void* data, size_t size) {
 	}
 }
 
+static char *path_to_open(char *path) {
+    int uid = getuid(); // user ID
+    struct passwd *password = getpwuid(uid);
+    char *home_directory = password->pw_dir;
+
+    size_t path_len = strlen(path) + 1;
+    size_t home_directory_len = strlen(home_directory) + 1;
+
+
+    char *path_to_file = (char *)malloc(path_len + home_directory_len - 1);
+    memset(path_to_file, 0, path_len + home_directory_len - 1);
+
+    char *tilde_p = strstr(path, "~");
+    int tilde_index = (int)(tilde_p - path);
+    if ( tilde_p == NULL && strstr(path, "/") != NULL) { // kde se hleda, co se hleda
+        strcpy(path_to_file, path);
+        printf("\n1. if path: %s opravdu", path_to_file);
+        fflush(stdout);
+    }
+    else if (tilde_p != NULL && strlen(path) == 1) {
+        strcpy(path_to_file, home_directory);
+        printf("\n2. if path: %s", path_to_file);
+        fflush(stdout);
+    }
+    else if (tilde_p != NULL && strlen(path) > 1) {
+        strcpy(path_to_file, home_directory);
+        strcpy(path_to_file + home_directory_len - 1, path + tilde_index + 1);
+        printf("\n3. if path: %s", path_to_file);
+        fflush(stdout);
+    }
+    else {
+        printf("\nnejaka chyba");
+    }
+
+    return path_to_file;
+}
+
 void data_send_ftp(struct bufferevent *bufevent_data, char *data_to_send) {
     // pokud chceme poslat soubor tak    read cb_c => write cb_c => write cb_d
     // pokud chceme prijmout souvor, tak read cb_c => write cb_c => read cb_d
@@ -637,14 +680,14 @@ void data_send_ftp(struct bufferevent *bufevent_data, char *data_to_send) {
     // int path_len = temp_struct.st_size;
 
     // char *data_to_send = read_contents_ftp(path_to_send);
-    printf("\n\n\n\n\n\n\n\n\n\nDATA_SEND_FTP");
+    printf("\n\n\n\n\n\n\n\n\n\nDATA_SEND_FTP\n\n\n\n\n");
     fflush(stdout);
     size_t path_len = strlen(data_to_send); // BEZ +1, PROTOZE FILES NEMAJI NULL TERMINATOR
     if ( bufferevent_write(bufevent_data, data_to_send, path_len) == -1) { // + 1 pro \0, protoze 1 char file => @ Bytes => 3 Bytes pro \0
         perror("bufferevent_write() selhal - bufevent_write_cb_data");
         exit(EXIT_FAILURE);
     }
-    printf("\n\n\n\n\n\n\n\n\n\nDATA_SEND_FTP");
+    printf("\n\n\n\n\n\n\n\n\n\nDATA_SEND_FTP\n\n\n\n\n\n");
     fflush(stdout);
 }
 
@@ -844,11 +887,18 @@ void make_connection(char **metadata_command) {
     // By default, the kernel will not reuse any in-use port for an ephemeral port, which may result in failures if you have 64K+ simultaneous ports in use.
     
     printf("\n\nftp_sockets_obj.ftp_data_socket: %d", ftp_sockets_obj.ftp_data_socket);
-    int yes = 1;
-    if ( setsockopt(ftp_sockets_obj.ftp_data_socket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) == -1) {
-        perror("setsockopt() selhal - make_connection - PORT");
-        exit(EXIT_FAILURE);
-    }
+
+    /*if () {
+        OS kernel prideluje ephemeral porty (docasne porty), ktere nejsou v TIME_WAIT, pokud by vsechny byly vTIME_WAIT, tak by nejspis TCP (bind() nebo connect() vyhodilo error) a nepustilo by me to dal
+        proto pokud bych chtel reusovat ty porty, tak bych musel nejak pouzit SO_REUSEADDR (to pusobi na IP odkud:ephemeral port), takze bych musel explicitne bind() nejakou local adresu a udelat jeste pred tim setsockopt() SOL_SOCKET, SO_REUSEADDR, proto jen toto setsockopt() SO_REUSEADDR na socket nema moc velke ucinky
+
+        int yes = 1;
+        if ( setsockopt(ftp_sockets_obj.ftp_data_socket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) == -1) {
+            perror("setsockopt() selhal - make_connection - PORT");
+            exit(EXIT_FAILURE);
+        }
+    }*/
+    
     // printf("\n\npo setsockopt(), port na connect: %d, %s", port);
     fflush(stdout);
 
@@ -857,6 +907,8 @@ void make_connection(char **metadata_command) {
         exit(EXIT_FAILURE);
     }
 
+    printf("\n\nmake connection");
+    fflush(stdout);
     if (connect(ftp_sockets_obj.ftp_data_socket, (struct sockaddr *)&server_data_info, sizeof(struct sockaddr_in)) == -1) { // blocking operace
         perror("connect() selhal - make_connection");
         printf("\n%s", strerror(errno));
@@ -925,6 +977,37 @@ char **metadata_command(char *command) {
         }
     }
     return array;
+}
+
+char *extract_path_command(char *command) {
+    char *separator = strstr(command, " ");
+    if (separator == NULL) {
+        perror("strstr() selhal - extract_path_command");
+        exit(EXIT_FAILURE);
+    }
+    int separator_i = (int)(separator - command);
+
+    char *carriage_return = strstr(command, "\r");
+    if (separator == NULL) {
+        perror("strstr() selhal - extract_path_command");
+        exit(EXIT_FAILURE);
+    }
+    int carriage_return_i = (int)(carriage_return - command);
+
+    char *path = (char *)malloc(92); // protoze 100 - 3 (\r\n\0) - 5 (RETR )
+    if (path == NULL) {
+        perror("malloc() selhal - extract_path_command");
+        exit(EXIT_FAILURE);
+    }
+    memset(path, 0, 92);
+
+    for (int i = separator_i + 1, path_i = 0; i < carriage_return_i; i++) {
+        path[path_i++] = command[i];
+    }
+    // nemusime resit \0, protoze automaticky NULL terminated
+    printf("\n\n\n\nextract_path: path: %s\n\n\n", path);
+    fflush(stdout);
+    return path;
 }
 
 char *extract_username_password(char *command_user_pass) {
@@ -1033,6 +1116,32 @@ int partial_login_lookup(char *text, int username_password) {
 
 void *run_ev_base_loop(void *) {
     event_base_loop(evbase_data, EVLOOP_NO_EXIT_ON_EMPTY);
+}
+
+char *get_file_name(char *path) {
+    char *filename = (char *)malloc(strlen(path) + 1);
+    int filename_i = 0;
+    memset(filename, 0, strlen(path) + 1); // pokud user posle jenom filename, tak maximalni filename musi byt path, ktery poslal, // automaticky NULL terminating
+
+    char *temp_last_slash_buf = (char *)malloc(strlen(path) + 1);
+    int temp_last_slash_buf_i = 0;
+    memset(temp_last_slash_buf, 0, strlen(path) + 1); // automaticky NULL terminating
+
+    for (int i = strlen(path) - 1; i >= 0; i--) { // nebo vetsi nez -1 => > -1
+        temp_last_slash_buf[temp_last_slash_buf_i++] = path[i];
+    }
+    char *last_slash = strstr(temp_last_slash_buf, "/");
+    
+    if (last_slash == NULL) {
+        perror("strstr() nenasel posledni slash - get_file_name");
+        exit(EXIT_FAILURE);
+    }
+    int last_slash_i = (int)(last_slash - temp_last_slash_buf);
+
+    for (int i = last_slash_i - 1; i >= 0; i--) { // muze byt i vetsi nez -1 => > -1
+        filename[filename_i++] = temp_last_slash_buf[i];
+    }
+    return filename;
 }
 
 mqd_t control_queue, data_queue;
@@ -1144,16 +1253,12 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
         printf("\n\n\nftp_user_loggedin %d, data_connection_port: %d, data_connection_socket_descriptor: %d\n\n\n\n\n", ftp_user_info.user_loggedin, ftp_user_info.data_connection_sd, ftp_user_info.data_connection_port);
         fflush(stdout);
 
-        if (ftp_user_info.user_loggedin && ftp_user_info.data_connection_sd != -1 && ftp_user_info.data_connection_port != -1) { // OK
-            char *st_space = strstr(command, " ");
-            int i_st_space = (int)(st_space - command);
-
-            char *path = (char *)malloc(strlen(command) - i_st_space + 1);
-            int path_i = 0;
-            for (int i = i_st_space + 1; i < strlen(command) + 1; i++) {
-                path[path_i++] = command[i];
-            }
-            path[path_i] == '\0';
+        if (ftp_user_info.user_loggedin == 1) { // OK
+            char *temp_path = (char *)malloc(strlen(command));
+            memset(temp_path, 0, strlen(command));
+            temp_path = extract_path_command(command);
+            
+            char *path = path_to_open(temp_path);
 
             // CONTROL
             if ( mq_send(control_queue, msg1, strlen(msg1) + 1, 30) == -1) { // file se posle
@@ -1162,14 +1267,17 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
             }
 
             // DATA
-            printf("\n\n\n\n\n\n\n\n\n\n\n\n%s", path);
+            printf("\n\n\n\n%s", temp_path);
             fflush(stdout);
+            
             if ( mq_send(data_queue, path, strlen(path) + 1, 30) == -1) {
-                perror("mq_send() selhal - execute commands - STOR - msg1");
+                perror("mq_send() selhal - execute commands - RETR - msg1");
                 exit(EXIT_FAILURE);
             }
 
             char *contents = read_contents_ftp(path);
+            printf("\n\n\n\n\ncontents: %s");
+            fflush(stdout);
             data_send_ftp(bufevent_data, contents);
         }
         else if (!ftp_user_info.user_loggedin) {
@@ -1187,33 +1295,29 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
         // send_file_bypath();
     }
     else if (strstr(command, "STOR") != NULL) { // CONTROL + DATA
+        printf("\n\n\n\n\ntady u STOR: %d, %d, %s", control_queue_i, data_queue_i, command);
+        fflush(stdout);
         char msg1[] = "200 - Command okay";
         char msg2[] = "532 - Need account for storing files";
         // const char msg3 = "501 - Syntax error in parameters or arguments";
 
         if (ftp_user_info.user_loggedin) {
-            char *st_space = strstr(" ", command);
-            int i_st_space = (int)(st_space - command);
+            char *temp_path = extract_path_command(command);
+            char *path = path_to_open(temp_path);
+            char *filename = get_file_name(path);
+            ftp_user_info.filename_to_save = strdup(filename);
+            printf("\n\n\n\n\nfilename: %s", filename);
+            fflush(stdout);
+            // char *contents = read_contents_ftp(temp_path); musi z data socketu prijit
 
-            char *path = (char *)malloc(strlen(command) - i_st_space + 1);
-            int path_i = 0;
-            for (int i = i_st_space + 1; i < strlen(command) + 1; i++) {
-                path[path_i++] = command[i];
-            }
-            path[path_i] == '\0';
 
-            // CONTROL
-            // ftp interpreter u klienta musi zadat path a na data connection se posle ten pozadovany soubor, my posleme zpravu s path, kde se file ma ulozit
-            if ( mq_send(control_queue, msg1, strlen(msg1) + 1, 30) == -1) {
-                perror("mq_send() selhal - execute commands - STOR - msg1");
-                exit(EXIT_FAILURE);
-            }
+            // save_file("/tmp", contents);
 
-            // DATA
-            if ( mq_send(data_queue, path, strlen(path) + 1, 30) == -1) {
-                perror("mq_send() selhal - execute commands - STOR - msg1");
-                exit(EXIT_FAILURE);
-            }
+            // // DATA
+            // if ( mq_send(data_queue, path, strlen(path) + 1, 30) == -1) {
+            //     perror("mq_send() selhal - execute commands - STOR - msg1");
+            //     exit(EXIT_FAILURE);
+            // }
             // mqueue pro data connection needed - AVE CHRISTUS REX!                     
         }
         else if (!ftp_user_info.user_loggedin) {
@@ -1350,7 +1454,7 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
                 perror("accept() selhal - execute commands - PASV");
                 exit(EXIT_FAILURE);
             }
-            printf("\n\naccepted\n\n");
+            printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\naccepted\n\n");
             fflush(stdout);
 
             // // vetsinou se setsockopt() ma davat pred bind(), listen(), accept(), connect(), ale pry jsou i nejaky options, ktere se maji dat az po
@@ -1430,15 +1534,15 @@ void execute_commands(char *command, struct bufferevent *bufevent_control) {
 }
 
 char *read_contents_ftp(char *path) {
-    char *carriage_return = strstr(path, "\r");
-    if (carriage_return == NULL) {
-        perror("strstr() selhal - read_contents_ftp");
-        exit(EXIT_FAILURE);
-    }
-    int carriage_return_i = (int)(carriage_return - path);
+    // char *carriage_return = strstr(path, "\r");
+    // if (carriage_return == NULL) {
+    //     perror("strstr() selhal - read_contents_ftp");
+    //     exit(EXIT_FAILURE);
+    // }
+    // int carriage_return_i = (int)(carriage_return - path);
 
-    path[carriage_return_i + 1] = '\0';
-    path[carriage_return_i] = '\0';
+    // path[carriage_return_i + 1] = '\0';
+    // path[carriage_return_i] = '\0';
 
     int fd = open(path, O_RDONLY);
     printf("\n\n\n%s", path);
@@ -1524,7 +1628,7 @@ char **get_account_information(char *client_information) {
 // nemusime implementovat event_cb, protoze kazda funkce dostava short events, kde muzeme treba zjistit, jestli peer disconectnul socket
 void bufevent_read_cb_control(struct bufferevent *bufevent_control, void *ptr_arg) {
     // v bufferu muzou byt vice TCP segmentu (data z TCP segmentu)
-   printf("\n\nREAD_CB_CONTROL\n\n\n\n\n\n\n\n\n");
+   printf("\n\nREAD_CB_CONTROL\n\n");
    fflush(stdout);
 //    exit(EXIT_FAILURE);
    reset_bufevent_data_len();
@@ -1697,7 +1801,7 @@ void control_send_ftp(struct bufferevent *bufevent_control) {
                     perror("bufferevent_write() selhal - write_control_cb - loggedin - case 1");
                     exit(EXIT_FAILURE);
                 }
-                printf("\n\n\n\n\n\nTADY\n\n\n\n\n\n\n\nAVE CHRISTUS REX AVE MARIA\n\n\n\n\n\n\n");
+                printf("\n\nTADY\nAVE CHRISTUS REX AVE MARIA\n\n");
                 fflush(stdout);
             }
             // poslat codes z mqueue => z execute commands
@@ -1715,7 +1819,10 @@ void bufevent_write_cb_control(struct bufferevent *bufevent_control, void *ptr_a
 }
 
 int save_file(char *path, char *data_received) {
-    int fd = open(path, O_CREAT | O_APPEND, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID); // 4777
+    printf("\n\nsave_file()\n\n");
+    fflush(stdout);
+    
+    int fd = open("/tmp/stor_file.txt", O_CREAT | O_APPEND, S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID); // 4777
 
     int len_of_data_received = strlen(data_received);
     ssize_t total_bytes = 0;
@@ -1804,6 +1911,14 @@ void bufevent_event_cb_control(struct bufferevent *bufevent_control, short event
     }
 }
 
+char *precise_path() {
+    char *precise_path = (char *)malloc(strlen(ftp_user_info.username) + strlen(ftp_user_info.filename_to_save) + 7); // jedno pro / => dve pro \0, tri pro tmp
+    memset(precise_path, 0, strlen(ftp_user_info.username) + strlen(ftp_user_info.filename_to_save) + 7);
+
+    snprintf(precise_path, strlen(ftp_user_info.username) + strlen(ftp_user_info.filename_to_save) + 7, "/tmp/%s/%s", ftp_user_info.username, ftp_user_info.filename_to_save);
+    return precise_path;
+}
+
 void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
     mqd_t data_queue = mq_open(DATA_QUEUE_NAME, O_RDONLY);
 
@@ -1832,7 +1947,9 @@ void bufevent_read_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
         total_bytes += bytes_read;
     }
 
-    save_file(path_to_receive, data); // tato funkce bud udela co ma, nebo skonci program => nemusime kontrolovat pomoci if statement 
+
+    char *path = precise_path();
+    save_file(path, data); // tato funkce bud udela co ma, nebo skonci program => nemusime kontrolovat pomoci if statement 
 }
 
 void bufevent_write_cb_data(struct bufferevent *bufevent_data, void *ptr_arg) {
@@ -1937,7 +2054,7 @@ void *select_ftp() {
         exit(EXIT_FAILURE);
     }
 
-    printf("\n=== Acceptovani control_socket ===");
+    printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n=== Acceptovani control_socket ===");
     if ((ftp_sockets_obj.ftp_control_com = accept(ftp_sockets_obj.ftp_control_socket, NULL, NULL)) == -1) {
         perror("accept() selhal - select_ftp");
         // exit(EXIT_FAILURE);
@@ -2030,10 +2147,11 @@ void *select_ftp() {
 int main()
 {
     signal(SIGINT, signal_handler);
-    system("/media/sf_projects_on_vm/FTP_SERVER/unlink_mqs");
+    system("./unlink_mqs");
+    system("python ./PYTHON/make_user_directories.py");
     printf("\n");
-    event_enable_debug_mode();
-    event_enable_debug_logging(EVENT_DBG_ALL);
+    // event_enable_debug_mode();
+    // event_enable_debug_logging(EVENT_DBG_ALL);
     evthread_use_pthreads(); // abychom mohli pouzivat libevent s threads
     set_queue_message_len();
     // client ma toho vice na praci, protoze si musi nastavit taky kontext (jako server), nastavit sifry (jako server), musi mit logiku na overovani toho certifikatu,
