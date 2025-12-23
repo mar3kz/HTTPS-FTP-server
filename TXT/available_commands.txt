@@ -1,10 +1,14 @@
-USER
-PASS
 QUIT
-PORT
-PASV
+CHDD
+PORT        ok
+PASV        ok
+TYPE        ok
+PWD         ok
+MKD         ok
+RMD         ok
+NOOP        ok
+CDUP        ok
+LIST        ok
+CD          ok
 RETR
 STOR
-NOOP
-TYPE
-CHDD

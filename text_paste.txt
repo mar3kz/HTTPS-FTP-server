@@ -1,0 +1,560 @@
+                                                                                                                                             
+┌──(marek㉿kali)-[/media/sf_projects_on_vm/FTP_SERVER]
+└─$ valgrind --leak-check=full --show-reachable=yes --show-leak-kinds=definite --track-origins=yes /media/sf_projects_on_vm/FTP_SERVER/ftp_client  
+==84497== Memcheck, a memory error detector
+==84497== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==84497== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==84497== Command: /media/sf_projects_on_vm/FTP_SERVER/ftp_client
+==84497== 
+fread - set_queue_message_len - EOFQUEUE_MESSAGE_LEN: 8192
+
+temp_data_socket: 11
+
+==84497== Warning: invalid file descriptor -1 in syscall mq_getsetattr()
+==84497== Thread 3:
+==84497== Use of uninitialised value of size 8
+==84497==    at 0x49272DB: _itoa_word (_itoa.c:183)
+==84497==    by 0x49315D9: __printf_buffer (vfprintf-process-arg.c:155)
+==84497==    by 0x4933664: __vfprintf_internal (vfprintf-internal.c:1559)
+==84497==    by 0x492826A: printf (printf.c:33)
+==84497==    by 0x10F0D4: entering_commands (ftp_client.c:2146)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Uninitialised value was created by a stack allocation
+==84497==    at 0x10F066: entering_commands (ftp_client.c:2133)
+==84497== 
+==84497== Conditional jump or move depends on uninitialised value(s)
+==84497==    at 0x49272EC: _itoa_word (_itoa.c:183)
+==84497==    by 0x49315D9: __printf_buffer (vfprintf-process-arg.c:155)
+==84497==    by 0x4933664: __vfprintf_internal (vfprintf-internal.c:1559)
+==84497==    by 0x492826A: printf (printf.c:33)
+==84497==    by 0x10F0D4: entering_commands (ftp_client.c:2146)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Uninitialised value was created by a stack allocation
+==84497==    at 0x10F066: entering_commands (ftp_client.c:2133)
+==84497== 
+==84497== Conditional jump or move depends on uninitialised value(s)
+==84497==    at 0x49323B3: __printf_buffer (vfprintf-process-arg.c:186)
+==84497==    by 0x4933664: __vfprintf_internal (vfprintf-internal.c:1559)
+==84497==    by 0x492826A: printf (printf.c:33)
+==84497==    by 0x10F0D4: entering_commands (ftp_client.c:2146)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Uninitialised value was created by a stack allocation
+==84497==    at 0x10F066: entering_commands (ftp_client.c:2133)
+==84497== 
+==84497== Conditional jump or move depends on uninitialised value(s)
+==84497==    at 0x4931DEB: __printf_buffer (vfprintf-process-arg.c:208)
+==84497==    by 0x4933664: __vfprintf_internal (vfprintf-internal.c:1559)
+==84497==    by 0x492826A: printf (printf.c:33)
+==84497==    by 0x10F0D4: entering_commands (ftp_client.c:2146)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Uninitialised value was created by a stack allocation
+==84497==    at 0x10F066: entering_commands (ftp_client.c:2133)
+==84497== 
+==84497== Conditional jump or move depends on uninitialised value(s)
+==84497==    at 0x49323DF: __printf_buffer (vfprintf-process-arg.c:208)
+==84497==    by 0x4933664: __vfprintf_internal (vfprintf-internal.c:1559)
+==84497==    by 0x492826A: printf (printf.c:33)
+==84497==    by 0x10F0D4: entering_commands (ftp_client.c:2146)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Uninitialised value was created by a stack allocation
+==84497==    at 0x10F066: entering_commands (ftp_client.c:2133)
+==84497== 
+
+
+ tady jsou ty udaje: 91234304 8388608 91234304 0+-----------------------------------------+
+| AVE CHRISTUS REX FTP server implements: |
+|                                         |
+| DATA REPRESENTATION: ASCII NONPRINT (N) |
+| TRANSMISSION MODE  : STREAM             |
+| DATA STRUCTURE     : FILE-STRUCTURE     |
+| COMMANDS: USER, PASS, QUIT, PORT, PASV  |
+|           RETR, STOR, NOOP, TYPE        |
++-----------------------------------------+
++------------------------------------------------+
+
+
+setup_con_buf=== Connection ftp_control_com: 11 ===
+
+
+
+
+
+
+
+
+
+
+
+DATA_QUEUE - handle_command_function: 13
+
+0x4b02de0 11
+all data sent
+| USER string = log in - necessary 1st command!  |
+| PASS string = log in - necessary 2nd command!  |
+| QUIT        = log out (teminate control con.)  |
+| PORT        = server -> client data con.       |
+| PASV        = client -> server data con.       |
+| RETR        = retrieve last specified file by  |
+| STOR        = send a file to server            |
+| NOOP        = server will send OK code & msg   |
+| TYPE        = ASCII N(on-print)/Image (bits)   |
++------------------------------------------------+
+
+DATA STRUCTURE      = file-structure (contiguous bits)
+TRANSMISSION MODE   = stream (with Nagle algortithm - TCP segments will wait for data to be as full)
+DATA REPRESENTATION = ASCII Non-print (only ASCII chars)/Image (bit data)
+Name: 12345678
+
+0 - username, 1 - password => 0, 12345678
+username_password: 0, account_info[0] = 12345678, account_info[1] = 12345678
+
+username
+
+
+
+ 8
+
+ 9
+
+ 10Password: 12345678
+
+0 - username, 1 - password => 1, 12345678
+username_password: 1, account_info[0] = 12345678, account_info[1] = 12345678
+
+password
+
+
+
+ 8
+
+ 9
+
+ 10230 - User logged in, proceed
+220 -    Service ready for new user
+
+
+length strlen(ftp_user_info.username) + strlen(ftp_user_info.password) + strlen(&<>&): 20
+
+ 19
+
+ 20
+
+ 21
+
+
+
+
+
+POSLALO SE TO?
+
+
+
+
+
+
+
+[/tmp/ftp_server/] $ 
+all data sent
+
+
+200 - command okay
+
+vse precteno
+200 - command okay
+LIST
+
+
+ 4
+
+ 5
+
+ 6
+user_request: LIST
+
+
+
+extract_path_command: LIST
+, strlen(command): 6
+==84497== Invalid read of size 1
+==84497==    at 0x484CCC6: __strlen_sse2 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x4932B5F: __printf_buffer (vfprintf-process-arg.c:435)
+==84497==    by 0x4933664: __vfprintf_internal (vfprintf-internal.c:1559)
+==84497==    by 0x492826A: printf (printf.c:33)
+==84497==    by 0x10E872: handle_command_function (ftp_client.c:1979)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b80 is 0 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484CCD4: __strlen_sse2 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x4932B5F: __printf_buffer (vfprintf-process-arg.c:435)
+==84497==    by 0x4933664: __vfprintf_internal (vfprintf-internal.c:1559)
+==84497==    by 0x492826A: printf (printf.c:33)
+==84497==    by 0x10E872: handle_command_function (ftp_client.c:1979)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b81 is 1 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484E310: memcpy@GLIBC_2.2.5 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x4928BB7: memcpy (string_fortified.h:29)
+==84497==    by 0x4928BB7: __printf_buffer_write (Xprintf_buffer_write.c:39)
+==84497==    by 0x4931303: __printf_buffer (vfprintf-process-arg.c:501)
+==84497==    by 0x4933664: __vfprintf_internal (vfprintf-internal.c:1559)
+==84497==    by 0x492826A: printf (printf.c:33)
+==84497==    by 0x10E872: handle_command_function (ftp_client.c:1979)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b80 is 0 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484E31D: memcpy@GLIBC_2.2.5 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x4928BB7: memcpy (string_fortified.h:29)
+==84497==    by 0x4928BB7: __printf_buffer_write (Xprintf_buffer_write.c:39)
+==84497==    by 0x4931303: __printf_buffer (vfprintf-process-arg.c:501)
+==84497==    by 0x4933664: __vfprintf_internal (vfprintf-internal.c:1559)
+==84497==    by 0x492826A: printf (printf.c:33)
+==84497==    by 0x10E872: handle_command_function (ftp_client.c:1979)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b82 is 2 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+temp_path: /tmp/ftp_server/, path: /tmp/ftp_server/==84497== Invalid read of size 1
+==84497==    at 0x484CCC6: __strlen_sse2 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E88D: handle_command_function (ftp_client.c:1981)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b80 is 0 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484CCD4: __strlen_sse2 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E88D: handle_command_function (ftp_client.c:1981)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b81 is 1 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484CCC6: __strlen_sse2 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E8A9: handle_command_function (ftp_client.c:1982)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b80 is 0 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484CCD4: __strlen_sse2 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E8A9: handle_command_function (ftp_client.c:1982)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b81 is 1 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484CCC6: __strlen_sse2 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E8CA: handle_command_function (ftp_client.c:1983)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b80 is 0 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484CCD4: __strlen_sse2 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E8CA: handle_command_function (ftp_client.c:1983)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b81 is 1 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484CCC6: __strlen_sse2 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x4932B5F: __printf_buffer (vfprintf-process-arg.c:435)
+==84497==    by 0x4955DFE: __vsnprintf_internal (vsnprintf.c:96)
+==84497==    by 0x492DF21: snprintf (snprintf.c:31)
+==84497==    by 0x10E8ED: handle_command_function (ftp_client.c:1983)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b80 is 0 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484CCD4: __strlen_sse2 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x4932B5F: __printf_buffer (vfprintf-process-arg.c:435)
+==84497==    by 0x4955DFE: __vsnprintf_internal (vsnprintf.c:96)
+==84497==    by 0x492DF21: snprintf (snprintf.c:31)
+==84497==    by 0x10E8ED: handle_command_function (ftp_client.c:1983)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b81 is 1 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484E310: memcpy@GLIBC_2.2.5 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x4928BB7: memcpy (string_fortified.h:29)
+==84497==    by 0x4928BB7: __printf_buffer_write (Xprintf_buffer_write.c:39)
+==84497==    by 0x4931303: __printf_buffer (vfprintf-process-arg.c:501)
+==84497==    by 0x4955DFE: __vsnprintf_internal (vsnprintf.c:96)
+==84497==    by 0x492DF21: snprintf (snprintf.c:31)
+==84497==    by 0x10E8ED: handle_command_function (ftp_client.c:1983)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b80 is 0 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid read of size 1
+==84497==    at 0x484E31D: memcpy@GLIBC_2.2.5 (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x4928BB7: memcpy (string_fortified.h:29)
+==84497==    by 0x4928BB7: __printf_buffer_write (Xprintf_buffer_write.c:39)
+==84497==    by 0x4931303: __printf_buffer (vfprintf-process-arg.c:501)
+==84497==    by 0x4955DFE: __vsnprintf_internal (vsnprintf.c:96)
+==84497==    by 0x492DF21: snprintf (snprintf.c:31)
+==84497==    by 0x10E8ED: handle_command_function (ftp_client.c:1983)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b82 is 2 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+==84497== Invalid free() / delete / delete[] / realloc()
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E8F9: handle_command_function (ftp_client.c:1985)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Address 0x4b06b80 is 0 bytes inside a block of size 92 free'd
+==84497==    at 0x484687F: free (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10E853: handle_command_function (ftp_client.c:1976)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497==  Block was alloc'd at
+==84497==    at 0x4843818: malloc (in /usr/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==84497==    by 0x10D371: extract_path_command (ftp_client.c:1412)
+==84497==    by 0x10E833: handle_command_function (ftp_client.c:1974)
+==84497==    by 0x10F551: entering_commands (ftp_client.c:2244)
+==84497==    by 0x4961111: start_thread (pthread_create.c:447)
+==84497==    by 0x49DF72F: clone (clone.S:100)
+==84497== 
+
+total 0
+drwxrwxr-x 2 marek 40 Nov 30 18:31 09876543
+drwxrwxr-x 2 marek 40 Nov 30 18:31 12345678
+drwxrwxr-x 2 marek 40 Nov 30 18:31 1325478i
+drwxrwxr-x 2 marek 40 Nov 30 18:31 aaaaaaaa
+drwxrwxr-x 2 marek 40 Nov 30 18:31 aydcgbjm
+drwxrwxr-x 2 marek 40 Nov 30 18:31 bbbbbbbb
+drwxrwxr-x 2 marek 40 Nov 30 18:31 mnbvcxyl
+drwxrwxr-x 2 marek 40 Nov 30 18:31 mweowiaj
+drwxrwxr-x 2 marek 40 Nov 30 18:31 poiuztre
+drwxrwxr-x 2 marek 40 Nov 30 18:31 qwertzui
+
+[/tmp/ftp_server/] $ LIST
+
+
+ 4
+
+ 6
+
+ 7
+user_request: LIST
+
+
+
+
+extract_path_command: LIST
+
+, strlen(command): 7
+strstr() selhal - extract_path_command: Function not implemented
+==84497== 
+==84497== HEAP SUMMARY:
+==84497==     in use at exit: 6,071 bytes in 38 blocks
+==84497==   total heap usage: 89 allocs, 52 frees, 48,207 bytes allocated
+==84497== 
+==84497== LEAK SUMMARY:
+==84497==    definitely lost: 0 bytes in 0 blocks
+==84497==    indirectly lost: 0 bytes in 0 blocks
+==84497==      possibly lost: 544 bytes in 2 blocks
+==84497==    still reachable: 5,527 bytes in 36 blocks
+==84497==         suppressed: 0 bytes in 0 blocks
+==84497== Reachable blocks (those to which a pointer was found) are not shown.
+==84497== To see them, rerun with: --leak-check=full --show-leak-kinds=all
+==84497== 
+==84497== For lists of detected and suppressed errors, rerun with: -s
+==84497== ERROR SUMMARY: 209 errors from 22 contexts (suppressed: 0 from 0)

@@ -1,3 +1,9 @@
 log.txt /home/marek/Documents/FTP_SERVER/TXT/log.txt marek
 try2.txt /home/marek/try2.txt marek
 try3.txt /home/marek/try3.txt marek
+soubor.txt /tmp/ftp_server_files/soubor.txt 12345678
+try1.txt /tmp/ftp_downloaded/try1.txt 12345678
+a.txt /tmp/ftp_downloaded/a.txt 12345678
+shell.txt /tmp/ftp_downloaded/shell.txt 12345678
+a.txt /tmp/ftp_downloaded/a.txt 12345678
+a.txt /tmp/ftp_downloaded/a.txt 12345678

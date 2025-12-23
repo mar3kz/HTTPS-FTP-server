@@ -2,9 +2,10 @@ import os # pro otevirani directories
 import sys # pro sys.exit()
 
 file = open("./TXT/accounts.txt", "r") # otevirani file
-to_save_path = "/tmp/"
+to_save_path = "/tmp/ftp_server/"
 
-os.makedirs("/tmp/ftp_server_files", mode=0o777, exist_ok=True)
+os.makedirs("/tmp/ftp_server", mode=0o777, exist_ok=True)
+os.makedirs("/tmp/ftp_downloaded", mode=0o777, exist_ok=True)
 
 username_password_list = [] # pro current radek username a password
 for line in file: # iterace pres radky file
