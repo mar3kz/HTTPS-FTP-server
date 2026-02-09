@@ -97,3 +97,9 @@ v shellu, abych se mohl podívat, v jakém header file se nachází a potom se m
 </ul>
 <br>
 https://www.youtube.com/watch?v=7YgaZIFn7mY&list=LL&index=2
+
+<h2>Compilation</h2>
+<pre>
+gcc -g /media/sf_projects_on_vm/FTP_SERVER/ftp_server.c -o /media/sf_projects_on_vm/FTP_SERVER/ftp_server -L /usr/local/lib -L /usr/lib/x86_64-linux-gnu/ -lssl -lcrypto -levent -lpthread -levent_pthreads -I /usr/include/openssl -I /usr/include/event2
+gcc -g /media/sf_projects_on_vm/FTP_SERVER/ftp_client.c -o /media/sf_projects_on_vm/FTP_SERVER/ftp_client -L /usr/local/lib -L /usr/lib/x86_64-linux-gnu/ -lssl -lcrypto -levent -lpthread -levent_pthreads -I /usr/include/openssl -I /usr/include/event2
+</pre>
