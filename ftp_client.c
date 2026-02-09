@@ -989,62 +989,7 @@ static char *path_to_open(char *buf, int working_with_files) {
     else {
         strcpy(path_to_control, buf);
     }
-
-    // else if (working_with_files == 1) {
-    //     size_t length = strlen(buf);
-
-    //     char *temp_filename = (char*)malloc(strlen(buf) + 1);
-    //     if (temp_filename == NULL) {
-    //         perror("malloc() selhal - path_to_open - working with files");
-    //         free_all();
-    //     }
-    //     memset(temp_filename, 0, strlen(buf) + 1); // automaticky NULL terminator
-
-    //     int temp_filename_i = 0;
-    //     for (int i = length - 1; i >= 0; i--) {
-    //         temp_filename[temp_filename_i++] = buf[i];
-    //     }
-
-    //     char *st_slash = strstr(temp_filename, "/");
-    //     if (st_slash == NULL) {
-    //         fprintf(stderr, "\nstrstr() nenasel zadny slash - path_to_open - working with files\n");
-    //         fflush(stderr);
-    //         free(path_to_control);
-    //         free(path_to_file);
-
-    //         return NULL;
-    //     }
-    //     int st_slash_i = (int)(st_slash - temp_filename);
-
-    //     char *filename = (char *)malloc(st_slash_i);
-    //     if (filename == NULL) {
-    //         perror("malloc() selhal - path_to_open - working with files");
-    //         fflush(stderr);
-
-    //         free(path_to_control);
-    //         free(path_to_file);
-    //         free_all();
-    //     }
-    //     memset(filename, 0, st_slash_i);
-
-    //     int filename_i = 0;
-    //     for (int i = st_slash_i - 1; i >= 0; i--) {
-    //         filename[filename_i++] = temp_filename[i];
-    //     }
-
-    //     ftp_user_info.filename_to_save = strdup(filename);
-
-    //     strcpy(path_to_control, filename);
-
-    //     free(temp_filename);
-    //     free(filename);
-    // }
-
-    // printf("\n\n\n\033[31mpath_to_file - path_to_open - zacatek: %s", path_to_file);
     printf("\nbuf - path_to_open - zacatek: %s\033[0m\n\n", buf);
-
-    // uz udelano v extract_path_command
-    // // " "
 
     /*
     path versions:
@@ -1123,7 +1068,7 @@ static char *path_to_open(char *buf, int working_with_files) {
             free_all();
         } // CHRIST IS GOD!!
         memset(output, 0, strlen(path_to_file) + strlen(ftp_user_info.filename_to_save) + 1);
-
+ 
         snprintf(output, strlen(path_to_file) + strlen(ftp_user_info.filename_to_save) + 1, "%s%s", path_to_file, ftp_user_info.filename_to_save);
     }
     else {
@@ -1132,7 +1077,7 @@ static char *path_to_open(char *buf, int working_with_files) {
         free(path_to_file);
         free(path_to_control);
         return output;
-    }    
+    }
     // printf("\n\033[31mfinal_path - path_to_open - konec: %s\n\n\n\033[0m", final_path); // Christ is Lord!
     // fflush(stdout);
 }
@@ -1277,14 +1222,71 @@ char *read_contents_ftp(char *path) {
     return data_from_file;
 }
 
-void data_send_ftp(struct bufferevent *bufevent_data, char *data_to_send) {
+void data_send_ftp(struct bufferevent *bufevent_data, char *data_to_send, int fd) {
+    // struct evbuffer *new_evbuffer = evbuffer_new();
+
+    // int return_value = evbuffer_add(new_evbuffer, data_to_send, strlen(data_to_send) + 1);
+    // if (return_value == -1) {
+    //     perror("evbuffer_add() selhal - #data_send_ftp");
+    //     free_all();
+    // }
+
     printf("\n\n\n\nDATA_SEND_FTP, data_to_send: %s\n", data_to_send);
     fflush(stdout);
+
+    struct evbuffer *evbuffer_output = bufferevent_get_output(ftp_user_info.bufevent_data);
+
+    if (evbuffer_add_file(evbuffer_output, fd, 0, -1) == -1) {
+        perror("\nevbuffer_add_selhal - #data_send_ftp");
+        fflush(stderr);
+        free_all();
+    }
+
     fflush(stdout);
-    if (bufferevent_write(ftp_user_info.bufevent_data, data_to_send, strlen(data_to_send)) == -1) { // strlen bez +1, protoze files NEMAJI NULL TERMINATOR!!
+    if (bufferevent_write_buffer(ftp_user_info.bufevent_data, evbuffer_output) == -1) { // strlen bez +1, protoze files NEMAJI NULL TERMINATOR!!
         fprintf(stderr, "\nbufferevent_write selhal - data_send_ftp");
         exit(EXIT_FAILURE);
     }
+    
+    // ssize_t bytes_sent = 0, bytes_to_send = strlen(data_to_send) + 1;
+    // while (1) {
+    //     char *current_chunk = (char*)malloc(4096);
+    //     if (current_chunk == NULL) {
+    //         perror("malloc() selhal - #data_send_ftp");
+    //         free_all();
+    //     }
+    //     memset(current_chunk, 0, 4096);
+
+    //     if (bytes_to_send > 4096) {
+    //         memcpy(current_chunk, data_to_send + bytes_sent, 4096);
+
+    //         if (bufferevent_write(ftp_user_info.bufevent_data, current_chunk, 4096) == -1) {
+    //             perror("bufferevent_write() selhal - control_send_account_info");
+    //             exit(EXIT_FAILURE);
+    //         }
+
+    //         bytes_sent += 4096;
+    //         bytes_to_send -= 4096;
+    //     }
+    //     else {
+    //         memcpy(current_chunk, data_to_send + bytes_sent, bytes_to_send);
+
+    //         if (bufferevent_write(ftp_user_info.bufevent_data, current_chunk, 4096) == -1) {
+    //             perror("bufferevent_write() selhal - control_send_account_info");
+    //             exit(EXIT_FAILURE);
+    //         }
+
+    //         bytes_sent += bytes_to_send;
+    //         bytes_to_send -= bytes_to_send;
+    //     }
+
+    //     if (bytes_to_send == 0 || bytes_sent == strlen(data_to_send) + 1) {
+    //         return;
+    //     }
+
+    //     sleep(2);
+    // }
+  
 }
 
 void control_send_account_info(struct bufferevent *bufevent_control, char *text) {
@@ -1396,6 +1398,9 @@ void send_ftp_commands(struct bufferevent *bufevent_control) {
 }
 
 void bufevent_event_cb_data(struct bufferevent *bufevent_data, short events, void *ptr_arg) {
+    printf("\nBUFEVENT_CB_DATA\n");
+    fflush(stdout);
+
     // printf("\n\n\nftp_user_info.quit_command_now: %d", ftp_user_info.quit_command_now);
     fflush(stdout);
     if (ftp_user_info.user_loggedin == 0) {
@@ -1543,13 +1548,13 @@ char *precise_path(char *filename) {
     // snprintf(precise_path, strlen(ftp_user_info.username) + strlen(ftp_user_info.filename_to_save) + 7, "/tmp/%s/%s", ftp_user_info.username, ftp_user_info.filename_to_save);
     // return precise_path;
 
-    char *temp_output = (char *)malloc(strlen(ftp_user_info.dd) + strlen(filename) + 2); // / \0
+    char *temp_output = (char *)malloc(strlen("/tmp/ftp_downloaded/") + strlen(filename) + 2); // / \0
     if (temp_output == NULL) {
         free_all();
     }
-    memset(temp_output, 0, strlen(ftp_user_info.dd) + strlen(filename) + 2);
+    memset(temp_output, 0, strlen("/tmp/ftp_downloaded/") + strlen(filename) + 2);
 
-    snprintf(temp_output, strlen(ftp_user_info.dd) + strlen(filename) + 2, "%s%s", ftp_user_info.dd, filename);
+    snprintf(temp_output, strlen("/tmp/ftp_downloaded/") + strlen(filename) + 2, "%s%s", "/tmp/ftp_downloaded/", filename);
 
     return temp_output;
 }// CHRIST IS KING! AVE AVE CHRISTUS REX!
@@ -1728,9 +1733,15 @@ void *thread_callback_func(void *) {
     fflush(stdout);
     event_base_loop(ftp_user_info.evbase_data, EVLOOP_NO_EXIT_ON_EMPTY);
 
-    printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nTO SKONCILO?");
-    fflush(stdout);
-    exit(EXIT_FAILURE);
+    if (ftp_user_info.user_loggedin == 0) {
+        fprintf(stdout, "\nevent_base_loop() skoncil - thread_callback_func - logged out - thread_callback_func\n");
+        fflush(stdout);
+    }
+    else {
+        perror("event_base_loop() selhal - thread_callback_func");
+        fflush(stderr);
+        free_all();
+    }
 }
 
 void signal_handler(int signal_value) {
@@ -1751,13 +1762,15 @@ void signal_handler(int signal_value) {
 }
 
 void reset_timeval_struct_data (evutil_socket_t fd, short what, void *arg) {
-    // printf("\ndata_struct");
-    // fflush(stdout);
+    printf("\ndata_struct");
+    fflush(stdout);
     ftp_user_info.timeout_data.tv_sec = 5;
     ftp_user_info.timeout_data.tv_usec = 0;
 }
 
 void reset_timeval_struct_control (evutil_socket_t fd, short what, void *arg) {
+    printf("\ncontrol_struct");
+    fflush(stdout);
     ftp_user_info.timeout_control.tv_sec = 5;
     ftp_user_info.timeout_control.tv_usec = 0;
 }
@@ -1784,41 +1797,56 @@ int check_path(char *path) {
 void quit_user() {
     if (ftp_user_info.username != NULL) {
         free(ftp_user_info.username); // free nezerouje memory, jen ji pripravi na dalsi pouzivani!
+        ftp_user_info.username = NULL;
     }
     if (ftp_user_info.password != NULL) {
         free(ftp_user_info.password);  // free nezerouje memory, jen ji pripravi na dalsi pouzivani!
+        ftp_user_info.password = NULL;
     }
     if (ftp_user_info.filename_to_save != NULL) {
         free(ftp_user_info.filename_to_save);
+        ftp_user_info.filename_to_save = NULL;
     }
     if (ftp_user_info.last_path != NULL) {
         free(ftp_user_info.last_path);
+        ftp_user_info.last_path = NULL;
     }
     if (ftp_user_info.dd != NULL) {
         free(ftp_user_info.dd);
+        ftp_user_info.dd = NULL;
     }
     if (ftp_user_info.user_request != NULL) {
         free(ftp_user_info.user_request);
+        ftp_user_info.user_request = NULL;
     }
+
 
     if ( ftp_user_info.data_queue != -1) {
         mq_close(ftp_user_info.data_queue);
     }
-    if (ftp_user_info.evbase_data != NULL) {
-        free(ftp_user_info.evbase_data);
-    }
+
+    // event_base -> event -> bufferevent = alokace
+    // bufferevent -> event -> event_base = dealokace!!!
     if (ftp_user_info.bufevent_data != NULL) {
-        free(ftp_user_info.bufevent_data);
+        bufferevent_free(ftp_user_info.bufevent_data);
+        ftp_user_info.bufevent_data = NULL;
     }
+    if (ftp_user_info.event_timeout_data != NULL) {
+        event_free(ftp_user_info.event_timeout_data);
+        ftp_user_info.event_timeout_data = NULL;
+    }
+    if (ftp_user_info.evbase_data != NULL) {
+        event_base_free(ftp_user_info.evbase_data); // protoze kdyz se udela free, tak ten pointer v sobe vetsinou nema NULL, ale nejakou hodnotu a stava se z nej dangling pointer, proto je dulezite nastavit, kam ukazuje na NULL, protoze, tak je nastavena logika dalsi casti programu
+        // ftp_user_info.evbase_data = (struct event_base *)0xbadf00d;
+        ftp_user_info.evbase_data = NULL;
+    }
+    
 
-    ftp_user_info.username = NULL;
-    ftp_user_info.password = NULL;
-    ftp_user_info.filename_to_save = NULL;
-    ftp_user_info.last_path = NULL;
-    ftp_user_info.dd = NULL;
-    ftp_user_info.user_request = NULL;
 
-    ftp_user_info.user_loggedin = 0;
+    ftp_user_info.user_request = malloc(100);
+    memset(ftp_user_info.user_request, 0, 100);
+
+    // ftp_user_info.user_loggedin = 0; v QUIT
 
     sleep(1); // prevence toho, ze se zprava <&&> neposle vcas
     close(ftp_user_info.ftp_sockets_obj.ftp_data_com);
@@ -1841,23 +1869,137 @@ void handle_command_function(char *command) {
     // printf("\n\ncommand: %s", command);
     // fflush(stdout);
 
-    if (strstr(command, "QUIT") != NULL) {
-        control_send_account_info(ftp_user_info.bufevent_control, "<&&>");
+    if (strstr(command, "USER") != NULL) {
+        // museji se naalokovat ty pointery tam
+        if (ftp_user_info.user_loggedin == 0) {
+            ftp_user_info.username = malloc(100);
+            ftp_user_info.user_request = malloc(100);
 
-        puts("200 - command okay");
+            while (1) {
+                printf("\nName:");
+                fflush(stdout);
+                scanf(" %97[^\n]", ftp_user_info.user_request);
+                int return_value = partial_login_lookup(ftp_user_info.user_request, 0);
+
+                if (return_value == 0) {
+                    puts("331 - Username ok, need password");
+                    ftp_user_info.username = strdup(ftp_user_info.user_request);
+                    break;
+                }
+            }
+        }
+        return;
+    }
+    else if (strstr(command, "PASS") != NULL) {
+        if (ftp_user_info.user_loggedin == 0 && ftp_user_info.username != NULL) {
+            ftp_user_info.evbase_data = event_base_new();
+            if (ftp_user_info.evbase_data == NULL) {
+                perror("event_base_new() selhal - setup_con_buf - ftp_user_info.evbase_data");
+                exit(EXIT_FAILURE);
+            }
+
+            ftp_user_info.password = malloc(100);
+            ftp_user_info.user_request = malloc(100);
+
+            printf("\nPassword:");
+            fflush(stdout);
+            scanf(" %97[^\n]", ftp_user_info.user_request);
+            int return_value = partial_login_lookup(ftp_user_info.user_request, 1);
+
+            if (return_value == 0) {
+                puts("230 - Username logged in");
+
+                char *temp_conformation = (char *)malloc(strlen(ftp_user_info.username) + strlen(ftp_user_info.password) + strlen("&<>&") + 3);
+                memset(temp_conformation, 0, strlen(ftp_user_info.username) + strlen(ftp_user_info.password) + strlen("&<>&") + 3);
+                snprintf(temp_conformation, strlen(ftp_user_info.username) + strlen(ftp_user_info.password) + strlen("&<>&"), "%s&<>&%s", ftp_user_info.username, ftp_user_info.password); // zapise vsechny bytes toho stringu bez \0 a na konci se to zakonci \0
+                temp_conformation = insert_crlf(temp_conformation);
+
+                control_send_account_info(ftp_user_info.bufevent_control, temp_conformation);
+
+
+                ftp_user_info.password = strdup((ftp_user_info.user_request));
+                ftp_user_info.user_loggedin = 1;
+                return;
+            }
+            else
+            {
+                puts("530 - Login Incorrect - need to call USER once more");
+                free(ftp_user_info.username);
+                return;
+            }
+        }
+        else {
+            puts("530 - Not logged in");
+        }
+        return;
+    }
+    if (strstr(command, "QUIT") != NULL) {
+        // logged off
+        ftp_user_info.user_loggedin = 0;
+
+        if (ftp_user_info.bufevent_data != NULL) { // zastaveni event_base_loop()
+            if (event_base_loopbreak(ftp_user_info.evbase_data) == -1) {
+                perror("event_base_loopbreak() selhal - handle_command_function - evbase_data - QUIT");
+                free_all();
+            }
+        }
+
+        printf("\nftp_user_info.username %s", ftp_user_info.username);
+        printf("\nftp_user_info.password %s", ftp_user_info.password);
+        printf("\nftp_user_info.last_path %s", ftp_user_info.last_path);
+        printf("\nftp_user_info.filename_to_save %s", ftp_user_info.filename_to_save);
+        printf("\nftp_user_info.timeout_data.tv_sec: %d", ftp_user_info.timeout_data.tv_sec);
+        printf("\nftp_user_info.timeout_data.tv_usec: %d", ftp_user_info.timeout_data.tv_usec);
+        printf("\nftp_user_info.evbase_control %p %d", ftp_user_info.evbase_control, ftp_user_info.evbase_control);
+        printf("\nftp_user_info.evbase_data %p %d", ftp_user_info.evbase_data, ftp_user_info.evbase_data);
+        printf("\nftp_user_info.bufevent_data %p %d", ftp_user_info.bufevent_data, ftp_user_info.bufevent_data);
+        printf("\nftp_user_info.bufevent_control %p %d", ftp_user_info.bufevent_control, ftp_user_info.bufevent_control);
+        printf("\nftp_user_info.user_loggedin %p %d", &ftp_user_info.user_loggedin, ftp_user_info.user_loggedin);
+        printf("\nftp_user_info.ftp_data_com %p %d", &ftp_user_info.ftp_sockets_obj.ftp_data_com, ftp_user_info.ftp_sockets_obj.ftp_data_com);
+
+        
+
+        fflush(stdout);
+
+        
+
+        puts("\n200 - command okay");
 
         // printf("\n\n\nftp_user_info.username: %s, ftp_user_info.password: %s", ftp_user_info.username, ftp_user_info.password);
         fflush(stdout);
         if (ftp_user_info.username != NULL && ftp_user_info.password != NULL) {
+            control_send_account_info(ftp_user_info.bufevent_control, "<&&>");
+            sleep(2);
             quit_user();
         }
         else {
             puts("530 - Not logged in");
         }
+
+        printf("\nftp_user_info.username %s", ftp_user_info.username);
+        printf("\nftp_user_info.password %s", ftp_user_info.password);
+        printf("\nftp_user_info.last_path %s", ftp_user_info.last_path);
+        printf("\nftp_user_info.filename_to_save %s", ftp_user_info.filename_to_save);
+        printf("\nftp_user_info.timeout_data.tv_sec: %d", ftp_user_info.timeout_data.tv_sec);
+        printf("\nftp_user_info.timeout_data.tv_usec: %d", ftp_user_info.timeout_data.tv_usec);
+        printf("\nftp_user_info.evbase_control %p %d", ftp_user_info.evbase_control, ftp_user_info.evbase_control);
+        printf("\nftp_user_info.evbase_data %p %d", ftp_user_info.evbase_data, ftp_user_info.evbase_data);
+        printf("\nftp_user_info.bufevent_data %p %d", ftp_user_info.bufevent_data, ftp_user_info.bufevent_data);
+        printf("\nftp_user_info.bufevent_control %p %d", ftp_user_info.bufevent_control, ftp_user_info.bufevent_control);
+        printf("\nftp_user_info.user_loggedin %p %d", &ftp_user_info.user_loggedin, ftp_user_info.user_loggedin);
+        printf("\nftp_user_info.ftp_data_com %p %d", &ftp_user_info.ftp_sockets_obj.ftp_data_com, ftp_user_info.ftp_sockets_obj.ftp_data_com);
+        fflush(stdout);
+        return;
     }
     else if (strstr(command, "CHDD") != NULL) {
         // musi byt ve formatu /slozka*/*
         // change default/downloads directory
+        if (ftp_user_info.user_loggedin == 0) {
+            fprintf(stderr, "\n530 - Not logged in\n");
+            fflush(stderr);
+            return;
+        }
+
         if (is_command_ok(command) != 1) {
             fprintf(stderr, "\nnejspise spatne zadany command");
             exit(EXIT_FAILURE);
@@ -1883,8 +2025,15 @@ void handle_command_function(char *command) {
             fflush(stderr);
         }
         // free_all();
+        return;
     }
     else if (strstr(command, "PORT") != NULL || strstr(command, "PASV") != NULL) { // connection part
+        if (ftp_user_info.user_loggedin == 0) {
+            fprintf(stderr, "\n530 - Not logged in\n");
+            fflush(stderr);
+            return;
+        }
+
         if (strstr(command, "PORT") != NULL) {
             // IPv4/IPv6, zpusob prenosu dat, protokol
             if ((ftp_user_info.ftp_sockets_obj.ftp_data_socket = socket(ftp_user_info.server_data_info.sin_family, SOCK_STREAM, 0)) == -1) {
@@ -1924,9 +2073,10 @@ void handle_command_function(char *command) {
                 exit(EXIT_FAILURE);
             }
 
-            send_ftp_commands(ftp_user_info.bufevent_control); // send to the server
+            // send_ftp_commands(ftp_user_info.bufevent_control); // send to the server // nekdy pokud se to bude sekat tak se muze stat to, ze ten client to automaticky resetne (resetne to OS), protoze server posle connect() jeste pred tim, nez je listen() socket
+            // sleep(1); // pokud se toto odkomentuje, tak klient posle connect(), ale client jeste neni v listen => RST
             // exit(EXIT_FAILURE);
-           
+
             // if (setsockopt(ftp_user_info.ftp_sockets_obj.ftp_data_socket_or_com, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1 ) {
             //     perror("setsockopt() selhal - handle_command_function - PORT");
             //     exit(EXIT_FAILURE);
@@ -1942,12 +2092,52 @@ void handle_command_function(char *command) {
                 exit(EXIT_FAILURE);
             }
 
-            if ((ftp_user_info.ftp_sockets_obj.ftp_data_com = accept(ftp_user_info.ftp_sockets_obj.ftp_data_socket, NULL, NULL)) == -1) {
-                perror("accept() selhal - handle_command_function");
-                exit(EXIT_FAILURE);
-            }
+            send_ftp_commands(ftp_user_info.bufevent_control); // send to the server
+            
+            // if (listen(ftp_user_info.ftp_sockets_obj.ftp_data_socket, BACKLOG) == -1) {
+            //     perror("listen() selhal - handle_command_function");
+            //     exit(EXIT_FAILURE);
+            // }
 
-            printf("\n%s, connection established", port_command);
+            // if ((ftp_user_info.ftp_sockets_obj.ftp_data_com = accept(ftp_user_info.ftp_sockets_obj.ftp_data_socket, NULL, NULL)) == -1) {
+            //     perror("accept() selhal - handle_command_function");
+            //     exit(EXIT_FAILURE);
+            // }
+            // printf("\n%s, connection established, %d", port_command, ftp_user_info.ftp_sockets_obj.ftp_data_com);
+
+            fd_set read_set, write_set, event_set;
+            FD_ZERO(&read_set);
+            FD_ZERO(&event_set);
+
+            FD_SET(ftp_user_info.ftp_sockets_obj.ftp_data_socket, &read_set);
+            FD_SET(ftp_user_info.ftp_sockets_obj.ftp_data_socket, &event_set);
+
+            struct timeval time = {.tv_sec = 5, .tv_usec = 0};
+
+            errno = 0;
+            int return_value = select(ftp_user_info.ftp_sockets_obj.ftp_data_socket + 1, &read_set, NULL, &event_set, &time);
+            if (return_value) {
+                printf("\nRETURN VALUE - SELECT()");
+                fflush(stdout);
+
+                if ((ftp_user_info.ftp_sockets_obj.ftp_data_com = accept(ftp_user_info.ftp_sockets_obj.ftp_data_socket, NULL, NULL)) == -1) {
+                    perror("accept() selhal - handle_command_function");
+                    exit(EXIT_FAILURE);
+                }
+
+                // int one = 1;
+                // setsockopt(ftp_user_info.ftp_sockets_obj.ftp_data_com, IPPROTO_TCP, TCP_NODELAY, (char *)&one, sizeof(int));
+
+                printf("\n%s, connection established, %d", port_command, ftp_user_info.ftp_sockets_obj.ftp_data_com);
+            }
+            else {
+                if (errno > 0) {
+                    perror("select() selhal - #handle_command_function");
+                }
+                else {
+                    fprintf(stderr, "\nbud selhal select() nebo vyprsel timeout %d ", ftp_user_info.ftp_sockets_obj.ftp_data_com);
+                }
+            }
         }
         else if (strstr(command, "PASV") != NULL) {
             // SELECT() NENI K TOMU ABY SE ZJISTILO JESTLI SE MUZE VYKONAT CONNECT< ALE JENM JESTLI JE MOZNO PRECIST/POSLAT DATA!!!!          
@@ -2021,8 +2211,13 @@ void handle_command_function(char *command) {
                 }
             }  
         }
-
+        // exit(EXIT_FAILURE);
         // printf("\nftp_data_com: %d", ftp_user_info.ftp_sockets_obj.ftp_data_com);
+
+
+        
+
+
         if (ftp_user_info.user_loggedin == 1) {
             // if (fcntl(ftp_user_info.ftp_sockets_obj.ftp_data_com, F_SETFL, O_NONBLOCK) == -1) {
             //     perror("fcntl() selhal - neslo nastavit O_NONBLOCK - handle_command_function");
@@ -2030,21 +2225,69 @@ void handle_command_function(char *command) {
             // }
 
             evutil_make_socket_nonblocking(ftp_user_info.ftp_sockets_obj.ftp_data_com);
+            
+            // reset_timeval_struct_data(0, 0, NULL);
+            // ftp_user_info.timeout_data.tv_sec = 5;
+            // ftp_user_info.timeout_data.tv_usec = 0;
 
-            ftp_user_info.event_timeout_data = event_new(ftp_user_info.evbase_data, ftp_user_info.ftp_sockets_obj.ftp_data_com, EV_PERSIST | EV_TIMEOUT, reset_timeval_struct_data, NULL);
-            event_add(ftp_user_info.event_timeout_data, &ftp_user_info.timeout_data);
+            struct timeval time = {
+                .tv_sec = 5,
+                .tv_usec = 0,
+            };
 
-            ftp_user_info.bufevent_data = bufferevent_socket_new(ftp_user_info.evbase_data, ftp_user_info.ftp_sockets_obj.ftp_data_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE); // BEV_OPT_UNLOCK_CALLBACKS - toto chce defaultne dereffered callbacks
+
+            printf("\nftp_user_info.username %s", ftp_user_info.username);
+            printf("\nftp_user_info.password %s", ftp_user_info.password);
+            printf("\nftp_user_info.last_path %s", ftp_user_info.last_path);
+            printf("\nftp_user_info.filename_to_save %s", ftp_user_info.filename_to_save);
+            printf("\nftp_user_info.timeout_data.tv_sec: %d", ftp_user_info.timeout_data.tv_sec);
+            printf("\nftp_user_info.timeout_data.tv_usec: %d", ftp_user_info.timeout_data.tv_usec);
+            printf("\nftp_user_info.evbase_control %p %d", ftp_user_info.evbase_control, ftp_user_info.evbase_control);
+            printf("\nftp_user_info.evbase_data %p %d", ftp_user_info.evbase_data, ftp_user_info.evbase_data);
+            printf("\nftp_user_info.bufevent_data %p %d", ftp_user_info.bufevent_data, ftp_user_info.bufevent_data);
+            printf("\nftp_user_info.bufevent_control %p %d", ftp_user_info.bufevent_control, ftp_user_info.bufevent_control);
+            printf("\nftp_user_info.user_loggedin %p %d", &ftp_user_info.user_loggedin, ftp_user_info.user_loggedin);
+            printf("\nftp_user_info.ftp_data_com %p %d", &ftp_user_info.ftp_sockets_obj.ftp_data_com, ftp_user_info.ftp_sockets_obj.ftp_data_com);
+            fflush(stdout);
+
+            ftp_user_info.event_timeout_data = event_new(ftp_user_info.evbase_data, -1, EV_PERSIST | EV_TIMEOUT, reset_timeval_struct_data, NULL);
+            event_add(ftp_user_info.event_timeout_data, &(time)); // &ftp_user_info.timeout_data
+
+            ftp_user_info.bufevent_data = bufferevent_socket_new(ftp_user_info.evbase_data, ftp_user_info.ftp_sockets_obj.ftp_data_com, BEV_OPT_CLOSE_ON_FREE); // BEV_OPT_THREADSAFE    BEV_OPT_UNLOCK_CALLBACKS - toto chce defaultne dereffered callbacks
             if (ftp_user_info.bufevent_data == NULL) {
                 perror("bufevent_data selhal - handle_command_function - PORT/PASV");
                 exit(EXIT_FAILURE);
             }
-            printf("\n\n\nnovy bufferevent_socket_new()");
+
+            evutil_socket_t socket = bufferevent_getfd(ftp_user_info.bufevent_data);
+
+            
+
+
+            printf("\n\n\nnovy bufferevent_socket_new(), %d", socket);
+            printf("\ntime.tv_sec: %d", time.tv_sec);
+            printf("\ntime.tv_usec: %d", time.tv_usec);
             fflush(stdout);
 
             void (*bufevent_event_data)(struct bufferevent *bufevent_both, short events, void *ptr_arg) = &bufevent_event_cb_data;
             void (*bufevent_write_data)(struct bufferevent *bufevent_data, void *ptr_arg) = &bufevent_write_cb_data;
             void (*bufevent_read_data)(struct bufferevent *bufevent_data, void *ptr_arg) = &bufevent_read_cb_data;
+
+
+            printf("\nftp_user_info.username %s", ftp_user_info.username);
+            printf("\nftp_user_info.password %s", ftp_user_info.password);
+            printf("\nftp_user_info.last_path %s", ftp_user_info.last_path);
+            printf("\nftp_user_info.filename_to_save %s", ftp_user_info.filename_to_save);
+            printf("\nftp_user_info.timeout_data.tv_sec: %d", ftp_user_info.timeout_data.tv_sec);
+            printf("\nftp_user_info.timeout_data.tv_usec: %d", ftp_user_info.timeout_data.tv_usec);
+            printf("\nftp_user_info.evbase_control %p %d", ftp_user_info.evbase_control, ftp_user_info.evbase_control);
+            printf("\nftp_user_info.evbase_data %p %d", ftp_user_info.evbase_data, ftp_user_info.evbase_data);
+            printf("\nftp_user_info.bufevent_data %p %d", ftp_user_info.bufevent_data, ftp_user_info.bufevent_data);
+            printf("\nftp_user_info.bufevent_control %p %d", ftp_user_info.bufevent_control, ftp_user_info.bufevent_control);
+            printf("\nftp_user_info.user_loggedin %p %d", &ftp_user_info.user_loggedin, ftp_user_info.user_loggedin);
+            printf("\nftp_user_info.ftp_data_com %p %d", &ftp_user_info.ftp_sockets_obj.ftp_data_com, ftp_user_info.ftp_sockets_obj.ftp_data_com);
+            fflush(stdout);
+
 
             bufferevent_setcb(ftp_user_info.bufevent_data, bufevent_read_data, bufevent_write_data, bufevent_event_data, NULL);
             bufferevent_enable(ftp_user_info.bufevent_data, EV_READ | EV_WRITE); // event base pro bufferevent
@@ -2062,11 +2305,18 @@ void handle_command_function(char *command) {
             }
             pthread_detach(callback_thread);
         }
+        return;
         // printf("\ndata_queue file descriptor: %d", ftp_user_info.data_queue);
     }
     else if (strstr(command, "TYPE") != NULL) {
         // printf("\nftp_user_info.ftp_data_representation: %d", ftp_user_info.ftp_data_representation);
-        fflush(stdout);
+        // fflush(stdout);
+
+        if (ftp_user_info.user_loggedin == 0) {
+            fprintf(stderr, "\n530 - Not logged in\n");
+            fflush(stderr);
+            return;
+        }
 
         if (strstr(command, "IMAGE") != NULL) {
             puts("200 - command okay");
@@ -2078,12 +2328,26 @@ void handle_command_function(char *command) {
         }
         // printf("ftp_user_info.ftp_data_representation: %d", ftp_user_info.ftp_data_representation);
         fflush(stdout);
+        return;
     }
     else if (strstr(command, "PWD") != NULL){
+        if (ftp_user_info.user_loggedin == 0) {
+            fprintf(stderr, "\n530 - Not logged in\n");
+            fflush(stderr);
+            return;
+        }
+
         printf("\n257 '%s'\n", ftp_user_info.curr_dir);
         fflush(stdout);
+        return;
     }
     else if (strstr(command, "MKD") != NULL) {
+        if (ftp_user_info.user_loggedin == 0) {
+            fprintf(stderr, "\n530 - Not logged in\n");
+            fflush(stderr);
+            return;
+        }
+
         char *temp_path = extract_path_command(command);
 
         if (strcmp(temp_path, ftp_user_info.curr_dir) == 0) {
@@ -2128,8 +2392,15 @@ void handle_command_function(char *command) {
                 fflush(stderr);
             }
         }
+        return;
     }
     else if (strstr(command, "RMD") != NULL) {
+        if (ftp_user_info.user_loggedin == 0) {
+            fprintf(stderr, "\n530 - Not logged in\n");
+            fflush(stderr);
+            return;
+        }
+
         char *temp_path = extract_path_command(command);
 
         if (strcmp(temp_path, ftp_user_info.curr_dir) == 0) {
@@ -2167,15 +2438,29 @@ void handle_command_function(char *command) {
                 fprintf(stderr, "\nUser zadal spatnou path\n");
                 fflush(stderr);
             }
-        }   
+        }
+        return; 
     }
     else if (strstr(command, "NOOP") != NULL) {
+        if (ftp_user_info.user_loggedin == 0) {
+            fprintf(stderr, "\n530 - Not logged in\n");
+            fflush(stderr);
+            return;
+        }
+
         puts("200 - command okay");
         send_message_queue(ftp_user_info.control_queue, command, strlen(command) + 1, "mq_send() selhal - handle_command_function - NOOP");
         send_ftp_commands(ftp_user_info.bufevent_control); // send to the server
         // puts("NOOP tady je\n");
+        return;
     }
     else if(strstr(command, "CDUP") != NULL) {
+        if (ftp_user_info.user_loggedin == 0) {
+            fprintf(stderr, "\n530 - Not logged in\n");
+            fflush(stderr);
+            return;
+        }
+
         printf("\n\nftp_user_info.curr_dir: %s\n\n\n", ftp_user_info.curr_dir);
         fflush(stdout);
         if (ftp_user_info.curr_dir != NULL) {
@@ -2183,10 +2468,16 @@ void handle_command_function(char *command) {
         }
         ftp_user_info.curr_dir = strdup("/tmp/ftp_server/"); // musi tam byt to posledni /, protoze od toho se potom odvijeji paths
         
-       
+        return;
     }
     // !Christ Is God!
     else if (strstr(command, "LIST") != NULL) {
+        if (ftp_user_info.user_loggedin == 0) {
+            fprintf(stderr, "\n530 - Not logged in\n");
+            fflush(stderr);
+            return;
+        }
+
         // ls -g, protoze nechci, aby tam bylo videt, ze to vytvoril root
         // kdyz se da LIST ~, tak se vyobrazi slozka '~', coz by nemelo ale asi je to stejne jako to . a ..
         if (is_command_ok(command) == 1) {
@@ -2261,7 +2552,7 @@ void handle_command_function(char *command) {
                         free_all();
                     }
 
-                    // jaky program, jmeno programu => sh je defaultni shell => dash => symbolicky link na bash
+                    // jaky program, jmeno programu => sh je defaultni shell interpreter pro systemove skripty
                     // pokud bych napsal jenom dash, tak by se to cetlo z stdin, -c udela aby se to precetlo z toho stringu
                     // execl("/bin/sh", "sh", "-c", "ls", "-l", (char *)NULL
 
@@ -2271,7 +2562,8 @@ void handle_command_function(char *command) {
                     }
                 }
                 waitpid(child_process_len, &status_len, 0); // 0 nikde v tutorialech napsana neni, jenom ze se to chova jako wait... 0 blokuje dokud child neskonci
-
+                // asi by se to vykonalo moc brzo
+                
                 if (WIFEXITED(status_len)) {
                     printf("\n\nok\n\n");
                 }
@@ -2383,10 +2675,17 @@ void handle_command_function(char *command) {
         else {
             fprintf(stderr, "LIST command ma spatny format\n");
             fflush(stderr);
-        }       
+        }
+
+        return; 
     }
     else if (strstr(command, "CD") != NULL) {
-        
+        if (ftp_user_info.user_loggedin == 0) {
+            fprintf(stderr, "\n530 - Not logged in\n");
+            fflush(stderr);
+            return;
+        }
+
         char *temp_path = extract_path_command(command);
         char *path = path_to_open(temp_path, 0);
 
@@ -2416,8 +2715,16 @@ void handle_command_function(char *command) {
             fprintf(stderr, "\nUzivatel zadal spatnou path\n");
             fflush(stderr);
         }
+
+        return;
     }
     else if (strstr(command, "RETR") != NULL || strstr(command, "STOR") != NULL) { // tady se otevre datova message queue //  && ftp_user_info.loggedin_info == 1
+        if (ftp_user_info.user_loggedin == 0) {
+            fprintf(stderr, "\n530 - Not logged in\n");
+            fflush(stderr);
+            return;
+        }
+
         if (ftp_user_info.bufevent_data != NULL) {
             if (strstr(command, "RETR") != NULL) {
                 if (is_command_ok(command) != 1) {
@@ -2480,7 +2787,9 @@ void handle_command_function(char *command) {
                     char *contents = read_contents_ftp(path);
                     printf("\n\n\n\nCONTENTS: %s", contents);
                     fflush(stdout);
-                    data_send_ftp(ftp_user_info.bufevent_data, contents);
+
+                    int fd = open(path, O_RDONLY);
+                    data_send_ftp(ftp_user_info.bufevent_data, contents, fd);
 
                     char *data_to_send = (char *)malloc(strlen(path) + strlen("STOR\r\n") + 2); // 1 pro mezeru a jedna pro \0
                     memset(data_to_send, 0, strlen(path) + strlen("STOR\r\n") + 2);
@@ -2511,10 +2820,12 @@ void handle_command_function(char *command) {
         // errno ma hodnotu 0, pokud je vse ok, pokud je to rozdilne, tak nekde nastala chyba
         if (errno != 0) {
             perror("nekde se vyskytla chyba - nejspise spatne zadany command - handle_command_function");
+            return;
         }
         else {
             fprintf(stderr, "zadany command nepotrebuje explicitni funkci nebo nejste prihlaseni a chcete pouzit command s data pripojenim\n");
             fflush(stdout);
+            return;
         }        
     }
 }
@@ -2591,7 +2902,13 @@ void *entering_commands(void *arg) {
         // tento socket bude blocking, protoze budeme vzdy cekat na odpoved od serveru
         // nedela nic specialniho; pokud bude false, tak se to ukonci; nedela nic specialniho
 
-        if (resolution1 == 0 && resolution2 == 0) { 
+        if (resolution1 == 0 && resolution2 == 0) {
+            ftp_user_info.evbase_data = event_base_new();
+            if (ftp_user_info.evbase_data == NULL) {
+                perror("event_base_new() selhal - setup_con_buf - ftp_user_info.evbase_data");
+                exit(EXIT_FAILURE);
+            }
+
             puts("230 - User logged in, proceed");
             puts("220 -    Service ready for new user");
 
@@ -2731,18 +3048,14 @@ void *setup_con_buf() {
     }
 
     ftp_user_info.evbase_control = event_base_new();
-    ftp_user_info.evbase_data = event_base_new();
+
 
     if (ftp_user_info.evbase_control == NULL) {
         perror("event_base_new() selhal - setup_con_buf - evbase_control");
         exit(EXIT_FAILURE);
     }
-    if (ftp_user_info.evbase_data == NULL) {
-        perror("event_base_new() selhal - setup_con_buf - ftp_user_info.evbase_data");
-        exit(EXIT_FAILURE);
-    }
 
-    ftp_user_info.event_timeout_control = event_new(ftp_user_info.evbase_control, ftp_user_info.ftp_sockets_obj.ftp_data_com, EV_PERSIST | EV_TIMEOUT, reset_timeval_struct_control, NULL);
+    ftp_user_info.event_timeout_control = event_new(ftp_user_info.evbase_control, -1, EV_PERSIST | EV_TIMEOUT, reset_timeval_struct_control, NULL);
     event_add(ftp_user_info.event_timeout_control, &ftp_user_info.timeout_control);
     
     if (fcntl(ftp_user_info.ftp_sockets_obj.ftp_control_com, F_SETFL, O_NONBLOCK) == -1) { // socket musi byt v nonblocking mode, aby to slo do bufferevent_socket_new()
@@ -2750,7 +3063,7 @@ void *setup_con_buf() {
         exit(EXIT_FAILURE);
     }
 
-    ftp_user_info.bufevent_control = bufferevent_socket_new(ftp_user_info.evbase_control, ftp_user_info.ftp_sockets_obj.ftp_control_com, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE); // BEV_OPT_UNLOCK_CALLBACKS
+    ftp_user_info.bufevent_control = bufferevent_socket_new(ftp_user_info.evbase_control, ftp_user_info.ftp_sockets_obj.ftp_control_com, BEV_OPT_CLOSE_ON_FREE); // BEV_OPT_THREADSAFE    BEV_OPT_UNLOCK_CALLBACKS
     // printf("\n\n%p %d", (void *)ftp_user_info.bufevent_control, ftp_user_info.ftp_sockets_obj.ftp_control_com);
     fflush(stdout);
     if (ftp_user_info.bufevent_control == NULL) {
